@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+pydantic
+python-dotenv
+supabase
+google-generativeai
+numpy
+pandas
+scipy
+matplotlib
+httpx
+psutil
+scikit-learn
+tensorflow
+transformers
+torch
