@@ -1,5 +1,5 @@
 """
-Pydantic models for GreenAI Dashboard API.
+Pydantic models for CarbonSight Dashboard API.
 Defines data structures for requests, responses, and internal data.
 """
 

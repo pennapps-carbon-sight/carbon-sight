@@ -1,5 +1,5 @@
 """
-Analytics service for GreenAI Dashboard API.
+Analytics service for CarbonSight Dashboard API.
 Handles statistical analysis, forecasting, and data visualization.
 """
 

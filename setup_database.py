@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Database setup script for GreenAI Dashboard.
+Database setup script for CarbonSight Dashboard.
 Creates the ai_requests table and cleans up fake data.
 """
 
@@ -14,7 +14,7 @@ async def setup_database():
     # Initialize Supabase client
     supabase: Client = create_client(config.supabase_url, config.supabase_key)
     
-    print("🔧 Setting up GreenAI Database...")
+    print("🔧 Setting up CarbonSight Database...")
     
     # Create ai_requests table
     print("📊 Creating ai_requests table...")
@@ -79,7 +79,7 @@ async def setup_database():
     print("🎉 Database setup complete!")
     print("\n📋 Next steps:")
     print("1. Run: python3 run.py")
-    print("2. Test: curl -X POST 'http://localhost:8000/api/v1/chat?message=Hello&model=cerebras-llama-3.1-8b'")
+    print("2. Test: curl -X POST 'http://localhost:8000/api/v1/chat/hybrid?message=Hello&gemini_model=gemini-1.5-flash&openai_model=gpt-3.5-turbo'")
     print("3. Check data: Visit your Supabase dashboard to see real data!")
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 """
-Database service for GreenAI Dashboard API.
+Database service for CarbonSight Dashboard API.
 Handles all database operations using Supabase.
 """
 
@@ -396,7 +396,7 @@ class DatabaseService:
         try:
             # Mock carbon credit data
             export_data = {
-                "organization": "GreenAI Corp",
+                "organization": "CarbonSight Corp",
                 "period": period,
                 "total_co2_saved_grams": round(random.uniform(1000, 10000), 2),
                 "total_energy_saved_kwh": round(random.uniform(100, 1000), 2),
@@ -510,4 +510,44 @@ class DatabaseService:
             
         except Exception as e:
             print(f"Error logging job: {e}")
+            return False
+    
+    async def log_ai_request(self, request_data: Dict[str, Any]) -> bool:
+        """
+        Log AI request with comprehensive metrics to ai_requests table.
+        
+        Args:
+            request_data: Dictionary containing all request and metrics data
+            
+        Returns:
+            Boolean indicating success
+        """
+        try:
+            # Prepare data for insertion
+            insert_data = {
+                "prompt": request_data.get("prompt", ""),
+                "response": request_data.get("response", ""),
+                "model_used": request_data.get("model_used", ""),
+                "user_id": request_data.get("user_id", "anonymous"),
+                "team_id": request_data.get("team_id", "team-engineering"),
+                "latency_ms": request_data.get("latency_ms"),
+                "cost_usd": request_data.get("cost_usd"),
+                "input_tokens": request_data.get("input_tokens"),
+                "output_tokens": request_data.get("output_tokens"),
+                "total_tokens": request_data.get("total_tokens"),
+                "input_cost_usd": request_data.get("input_cost_usd"),
+                "output_cost_usd": request_data.get("output_cost_usd"),
+                "tokens_per_second": request_data.get("tokens_per_second"),
+                "cost_per_token": request_data.get("cost_per_token"),
+                "cost_per_character": request_data.get("cost_per_character"),
+                "prompt_complexity": request_data.get("prompt_complexity"),
+                "efficiency_score": request_data.get("efficiency_score"),
+                "created_at": "now()"
+            }
+            
+            response = self.client.table("ai_requests").insert(insert_data).execute()
+            return len(response.data) > 0
+            
+        except Exception as e:
+            print(f"Error logging AI request: {e}")
             return False

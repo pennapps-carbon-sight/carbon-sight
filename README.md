@@ -1,4 +1,4 @@
-# 🌱 GreenAI Dashboard API
+# 🌱 CarbonSight Dashboard API
 
 A comprehensive FastAPI backend for tracking AI model energy consumption, CO2 emissions, and sustainability metrics across teams and organizations.
 

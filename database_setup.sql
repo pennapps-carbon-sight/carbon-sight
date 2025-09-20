@@ -1,4 +1,4 @@
--- GreenAI Dashboard Database Schema
+-- CarbonSight Dashboard Database Schema
 -- Run this in your Supabase SQL editor
 
 -- Enable necessary extensions
@@ -60,18 +60,18 @@ CREATE INDEX IF NOT EXISTS idx_users_team_id ON users(team_id);
 
 -- Insert sample data
 INSERT INTO teams (team_id, team_name, organization) VALUES 
-    ('team-engineering', 'Engineering Team', 'GreenAI Corp'),
-    ('team-marketing', 'Marketing Team', 'GreenAI Corp'),
-    ('team-sales', 'Sales Team', 'GreenAI Corp'),
-    ('team-research', 'Research Team', 'GreenAI Corp')
+    ('team-engineering', 'Engineering Team', 'CarbonSight Corp'),
+    ('team-marketing', 'Marketing Team', 'CarbonSight Corp'),
+    ('team-sales', 'Sales Team', 'CarbonSight Corp'),
+    ('team-research', 'Research Team', 'CarbonSight Corp')
 ON CONFLICT (team_id) DO NOTHING;
 
 INSERT INTO users (user_id, email, team_id) VALUES 
-    ('user-alice', 'alice@greenai.com', 'team-engineering'),
-    ('user-bob', 'bob@greenai.com', 'team-engineering'),
-    ('user-carol', 'carol@greenai.com', 'team-marketing'),
-    ('user-david', 'david@greenai.com', 'team-sales'),
-    ('user-eve', 'eve@greenai.com', 'team-research')
+    ('user-alice', 'alice@carbonsight.com', 'team-engineering'),
+    ('user-bob', 'bob@carbonsight.com', 'team-engineering'),
+    ('user-carol', 'carol@carbonsight.com', 'team-marketing'),
+    ('user-david', 'david@carbonsight.com', 'team-sales'),
+    ('user-eve', 'eve@carbonsight.com', 'team-research')
 ON CONFLICT (user_id) DO NOTHING;
 
 -- Insert sample energy usage data

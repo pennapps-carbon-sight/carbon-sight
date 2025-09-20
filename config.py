@@ -1,5 +1,5 @@
 """
-Configuration management for GreenAI Dashboard API.
+Configuration management for CarbonSight Dashboard API.
 Handles environment variables and application settings.
 """
 
@@ -25,8 +25,9 @@ class Config:
         self.supabase_url: str = os.getenv("SUPABASE_URL", "")
         self.supabase_key: str = os.getenv("SUPABASE_KEY", "")
         
-        # Cerebras API configuration
+        # AI API configuration
         self.gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
+        self.openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
         
         # Application settings
         self.debug: bool = os.getenv("DEBUG", "False").lower() == "true"
@@ -34,7 +35,7 @@ class Config:
         self.port: int = int(os.getenv("PORT", "8000"))
         
         # API configuration
-        self.api_title: str = "GreenAI Dashboard API"
+        self.api_title: str = "CarbonSight Dashboard API"
         self.api_version: str = "1.0.0"
         
         # Energy calculation constants

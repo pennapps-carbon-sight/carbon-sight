@@ -1,5 +1,5 @@
 """
-Main FastAPI application for GreenAI Dashboard API.
+Main FastAPI application for CarbonSight Dashboard API.
 Provides comprehensive dashboard data and analytics for teams and admins.
 """
 
@@ -17,13 +17,15 @@ from models import (
 from database_service import DatabaseService
 from analytics_service import AnalyticsService
 from gemini_service import GeminiService
+from openai_service import OpenAIService
+from metrics_service import MetricsService
 from ml_service import MLService
 
 # Initialize FastAPI app
 app = FastAPI(
     title=config.api_title,
     version=config.api_version,
-    description="GreenAI Dashboard API - Team and Admin analytics for sustainable AI usage"
+    description="CarbonSight Dashboard API - Team and Admin analytics for sustainable AI usage"
 )
 
 # Add CORS middleware
@@ -39,6 +41,8 @@ app.add_middleware(
 database_service = DatabaseService()
 analytics_service = AnalyticsService()
 gemini_service = GeminiService()
+openai_service = OpenAIService()
+metrics_service = MetricsService()
 ml_service = MLService()
 
 
@@ -52,11 +56,26 @@ def get_analytics_service() -> AnalyticsService:
     return analytics_service
 
 
+def get_openai_service() -> OpenAIService:
+    """Dependency to get OpenAI service instance."""
+    return openai_service
+
+
+def get_metrics_service() -> MetricsService:
+    """Dependency to get metrics service instance."""
+    return metrics_service
+
+
+def get_ml_service() -> MLService:
+    """Dependency to get ML service instance."""
+    return ml_service
+
+
 @app.get("/")
 async def root():
     """Root endpoint with API information."""
     return {
-        "name": "GreenAI Dashboard API",
+        "name": "CarbonSight Dashboard API",
         "version": config.api_version,
         "description": "Team and Admin dashboards for sustainable AI usage",
         "endpoints": {
@@ -402,6 +421,170 @@ async def chat_completion(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Chat completion failed: {str(e)}")
+
+
+# Hybrid Chat: Gemini Response + OpenAI Metrics
+@app.post("/api/v1/chat/hybrid")
+async def hybrid_chat(
+    message: str,
+    gemini_model: str = "gemini-1.5-flash",
+    openai_model: str = "gpt-3.5-turbo",
+    user_id: str = "anonymous",
+    team_id: str = "team-engineering",
+    gemini: GeminiService = Depends(lambda: gemini_service),
+    openai_service: OpenAIService = Depends(get_openai_service),
+    metrics_service: MetricsService = Depends(get_metrics_service),
+    db: DatabaseService = Depends(get_database_service)
+):
+    """
+    Hybrid chat: Gemini for response + OpenAI for metrics.
+    
+    This endpoint:
+    1. Calls Gemini API for actual response (what user sees)
+    2. Calls OpenAI API for latency/cost metrics (background)
+    3. Combines both for comprehensive tracking
+    4. Saves detailed metrics to database
+    """
+    try:
+        # Call Gemini for actual response
+        gemini_result = await gemini.generate_content(
+            prompt=message,
+            model=gemini_model
+        )
+        
+        # Call OpenAI for metrics (in parallel)
+        openai_result = await openai_service.generate_content(
+            prompt=message,
+            model=openai_model
+        )
+        
+        if gemini_result["success"] and openai_result["success"]:
+            # Track metrics using OpenAI data
+            metrics = metrics_service.track_request_metrics(
+                prompt=message,
+                response=gemini_result["response_text"],  # Use Gemini response
+                model=f"{gemini_model}+{openai_model}",  # Combined model name
+                latency_ms=openai_result["latency_ms"],  # Use OpenAI latency
+                cost_usd=openai_result["cost_usd"],  # Use OpenAI cost
+                input_tokens=openai_result["input_tokens"],
+                output_tokens=openai_result["output_tokens"],
+                total_tokens=openai_result["total_tokens"]
+            )
+            
+            # Save to database with detailed metrics
+            await db.log_ai_request({
+                "prompt": message,
+                "response": gemini_result["response_text"],  # Gemini response
+                "model_used": f"{gemini_model}+{openai_model}",
+                "user_id": user_id,
+                "team_id": team_id,
+                "latency_ms": openai_result["latency_ms"],
+                "cost_usd": openai_result["cost_usd"],
+                "input_tokens": openai_result["input_tokens"],
+                "output_tokens": openai_result["output_tokens"],
+                "total_tokens": openai_result["total_tokens"],
+                "input_cost_usd": openai_result["input_cost_usd"],
+                "output_cost_usd": openai_result["output_cost_usd"],
+                "tokens_per_second": metrics["tokens_per_second"],
+                "cost_per_token": metrics["cost_per_token"],
+                "cost_per_character": metrics["cost_per_character"],
+                "prompt_complexity": metrics["prompt_complexity"],
+                "efficiency_score": metrics["efficiency_score"]
+            })
+        
+        return {
+            "message": gemini_result["response_text"],  # User gets Gemini response
+            "response_model": gemini_model,
+            "metrics_model": openai_model,
+            "latency_ms": openai_result["latency_ms"],
+            "cost_usd": openai_result["cost_usd"],
+            "tokens_used": {
+                "input": openai_result["input_tokens"],
+                "output": openai_result["output_tokens"],
+                "total": openai_result["total_tokens"]
+            },
+            "efficiency_score": metrics.get("efficiency_score", 0),
+            "success": gemini_result["success"]
+        }
+        
+    except Exception as e:
+        return {
+            "message": f"Error: {str(e)}",
+            "success": False,
+            "error": str(e)
+        }
+
+
+# Metrics and Performance Endpoints
+@app.get("/api/v1/metrics/performance")
+async def get_performance_metrics(
+    model: Optional[str] = None,
+    hours: int = 24,
+    metrics_service: MetricsService = Depends(get_metrics_service)
+):
+    """Get performance metrics summary for recent requests."""
+    try:
+        summary = metrics_service.get_performance_summary(model=model, hours=hours)
+        return {"metrics": summary, "success": True}
+    except Exception as e:
+        return {"error": str(e), "success": False}
+
+
+@app.get("/api/v1/metrics/model-comparison")
+async def get_model_comparison(
+    hours: int = 24,
+    metrics_service: MetricsService = Depends(get_metrics_service)
+):
+    """Compare performance across different models."""
+    try:
+        comparison = metrics_service.get_model_comparison(hours=hours)
+        return {"comparison": comparison, "success": True}
+    except Exception as e:
+        return {"error": str(e), "success": False}
+
+
+@app.post("/api/v1/metrics/efficiency-recommendations")
+async def get_efficiency_recommendations(
+    current_model: str,
+    prompt: str,
+    metrics_service: MetricsService = Depends(get_metrics_service)
+):
+    """Get efficiency recommendations for a specific prompt and model."""
+    try:
+        recommendations = metrics_service.get_efficiency_recommendations(current_model, prompt)
+        return {"recommendations": recommendations, "success": True}
+    except Exception as e:
+        return {"error": str(e), "success": False}
+
+
+@app.get("/api/v1/openai/models")
+async def get_available_models(
+    openai_service: OpenAIService = Depends(get_openai_service)
+):
+    """Get available OpenAI models and their configurations."""
+    try:
+        models = openai_service.get_available_models()
+        model_info = {}
+        for model in models:
+            model_info[model] = openai_service.get_model_info(model)
+        return {"models": model_info, "success": True}
+    except Exception as e:
+        return {"error": str(e), "success": False}
+
+
+@app.post("/api/v1/openai/estimate-cost")
+async def estimate_cost(
+    prompt: str,
+    model: str = "gpt-3.5-turbo",
+    estimated_output_tokens: int = 100,
+    openai_service: OpenAIService = Depends(get_openai_service)
+):
+    """Estimate cost for a prompt without making API call."""
+    try:
+        estimate = openai_service.estimate_cost(prompt, model, estimated_output_tokens)
+        return {"estimate": estimate, "success": True}
+    except Exception as e:
+        return {"error": str(e), "success": False}
 
 
 # Admin Dashboard Endpoints

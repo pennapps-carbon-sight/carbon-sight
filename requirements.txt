@@ -4,6 +4,8 @@ pydantic
 python-dotenv
 supabase
 google-generativeai
+openai
+tiktoken
 numpy
 pandas
 scipy
