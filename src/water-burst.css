@@ -1,0 +1,63 @@
+:root{
+  --wb-green:#34d399;          /* emerald-400 */
+  --wb-red:#f87171;            /* rose-400 */
+  --wb-rise-dur:3.2s;          /* total rise→hold→fall time */
+  --wb-fill-alpha:0.16;        /* translucency (0.10–0.22 works well) */
+}
+
+/* Normal color mapping */
+[data-color="green"]{ --wb-color:var(--wb-green); }
+[data-color="red"]  { --wb-color:var(--wb-red);   }
+
+/* Fill below the crest; subtle so text stays readable */
+.wb-surface{
+  fill:var(--wb-color);
+  fill-opacity:var(--wb-fill-alpha);
+  will-change: transform;
+  backface-visibility: hidden;
+}
+
+/* Vertical motion: smooth easing per segment */
+.wb-rise{
+  transform-box: fill-box;
+  transform-origin: 50% 0%;
+  animation: wb-rise-hold-fall var(--wb-rise-dur) forwards;
+  will-change: transform;
+}
+
+/* Segment-specific easing for extra smoothness */
+@keyframes wb-rise-hold-fall{
+  0%{
+    transform: translateY(100%);  /* off-screen bottom */
+    animation-timing-function: cubic-bezier(.22,.61,.36,1);  /* smooth ease-out */
+  }
+  30%{
+    transform: translateY(0%);    /* up */
+    animation-timing-function: linear;                      /* steady hold */
+  }
+  70%{
+    transform: translateY(0%);    /* hold */
+    animation-timing-function: cubic-bezier(.36,.01,.22,.99); /* smooth ease-in */
+  }
+  100%{
+    transform: translateY(100%);  /* back down */
+  }
+}
+
+/* === Performance / reduced-motion mode ===
+   Keep same animation BUT force the tint to RED and
+   override any global "animation:none !important" rules. */
+@media (prefers-reduced-motion: reduce){
+  /* Force red tint */
+  .wb-allow-motion[data-color],
+  .wb-allow-motion [data-color],
+  .wb-allow-motion [data-color="green"],
+  .wb-allow-motion [data-color="red"]{
+    --wb-color: var(--wb-red) !important;
+  }
+
+  /* Re-enable the burst animation even if a global rule disables it */
+  .wb-allow-motion .wb-rise{
+    animation: wb-rise-hold-fall var(--wb-rise-dur) forwards !important;
+  }
+}
