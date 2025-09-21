@@ -25,6 +25,8 @@ import {
   BarChart as RBarChart, Bar,
 } from "recharts";
 import CarbonSightLogo from "./CarbonSightLockup";
+import type { TeamAverages } from "./models/metrics";
+import { fetchTeamAverages } from "./api/metrics";
 
 // FX
 import WaterBurstFX from "./WaterBurst";
@@ -70,6 +72,7 @@ const supabase = !MISSING_ENV
 interface AuthCtx {
   session: Session | null;
   user: User | null;
+  checkEmailExists: (email: string) => Promise<boolean>;
   sendOTP: (email: string) => Promise<void>;
   verifyOTP: (email: string, token: string) => Promise<{ isNewUser: boolean }>;
   logout: () => Promise<void>;
@@ -89,6 +92,33 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     const sub = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
     return () => sub.data.subscription.unsubscribe();
   }, []);
+
+  async function checkEmailExists(email: string): Promise<boolean> {
+    if (!supabase) throw new Error("Supabase env vars are missing. Add .env and restart the dev server.");
+    console.log("[Auth] Checking if email exists:", email);
+    
+    try {
+      // Check in login table for existing user registration
+      const { data, error } = await supabase
+        .from('login')
+        .select('user_email')
+        .eq('user_email', email)
+        .limit(1);
+      
+      if (error) {
+        console.log("[Auth] Error checking email existence:", error);
+        // If we can't check, assume it's a new user to be safe
+        return false;
+      }
+      
+      const exists = data && data.length > 0;
+      console.log("[Auth] Email exists:", exists);
+      return exists;
+    } catch (err) {
+      console.log("[Auth] Exception checking email existence:", err);
+      return false;
+    }
+  }
 
   async function sendOTP(email: string) {
     if (!supabase) throw new Error("Supabase env vars are missing. Add .env and restart the dev server.");
@@ -127,16 +157,15 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     
     console.log("[Auth] OTP verified successfully:", data);
     
-    // Check if this is a new user by comparing created_at and updated_at
-    const isNewUser = data.user && data.user.created_at === data.user.updated_at;
-    console.log("[Auth] Is new user:", isNewUser);
+    // Check if user exists in our login table (this is the real check we should use)
+    const userExists = await checkEmailExists(email);
+    console.log("[Auth] User exists in login table:", userExists);
     
-    if (isNewUser) {
-      // For new users, we'll store their info after team selection
+    if (!userExists) {
+      // For new users, we need to store them in login table after team selection
       return { isNewUser: true };
     } else {
-      // For existing users, store their info immediately
-      await storeUserEmail(email);
+      // For existing users, they're already in our login table
       return { isNewUser: false };
     }
   }
@@ -145,17 +174,11 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!supabase) return;
     
     try {
-      // Store user registration with team information
+      // Store user registration in the login table
       const { data, error } = await supabase
-        .from('CarbonSight')
+        .from('login')
         .insert([{ 
-          model_name: 'user_registration',
-          latency: 0,
-          cost: 0,
-          gco2_emissions: 0,
-          created_at: new Date().toISOString(),
-          prompt_text: `User registered: ${email}${team ? ` (Team: ${team})` : ''}`,
-          user_email_text: email,
+          user_email: email,
           team: team || 'Not specified'
         }]);
       
@@ -163,15 +186,9 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
         console.log("[Auth] Error storing user data:", error);
         // Try without team field if that fails
         const { data: data2, error: error2 } = await supabase
-          .from('CarbonSight')
+          .from('login')
           .insert([{ 
-            model_name: 'user_registration',
-            latency: 0,
-            cost: 0,
-            gco2_emissions: 0,
-            created_at: new Date().toISOString(),
-            prompt_text: `User registered: ${email}${team ? ` (Team: ${team})` : ''}`,
-            user_email_text: email
+            user_email: email
           }]);
         
         if (error2) {
@@ -188,7 +205,7 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
   }
   async function logout() { if (supabase) await supabase.auth.signOut(); }
 
-  const value = useMemo(() => ({ session, user: session?.user ?? null, sendOTP, verifyOTP, logout }), [session]);
+  const value = useMemo(() => ({ session, user: session?.user ?? null, checkEmailExists, sendOTP, verifyOTP, logout }), [session]);
   return <Auth.Provider value={value}>{children}</Auth.Provider>;
 }
 
@@ -272,45 +289,127 @@ function estimateGemini(promptText: string) {
 async function insertGeminiToSupabase(promptText: string, userEmail: string) {
   if (!supabase) return;
   
+  console.log("[Gemini] Starting analysis for user:", userEmail);
   const results = estimateGemini(promptText);
   
-  // First, let's check what columns exist in the table
+  // First, get user information from the login table
+  let userTeam = 'Unknown';
   try {
-    const { data: tableData, error: tableError } = await supabase
+    console.log("[Gemini] Fetching user info from login table for:", userEmail);
+    const { data: loginData, error: loginError } = await supabase
+      .from('login')
+      .select('user_email, team')
+      .eq('user_email', userEmail)
+      .single();
+    
+    if (loginError) {
+      console.log("[Gemini] Error fetching user info from login table:", loginError);
+      console.log("[Gemini] LoginError details:", {
+        code: loginError.code,
+        message: loginError.message,
+        details: loginError.details
+      });
+    } else if (loginData) {
+      userTeam = loginData.team || 'Unknown';
+      console.log("[Gemini] Found user info:", { userEmail, userTeam, loginData });
+    } else {
+      console.log("[Gemini] No data returned from login table for user:", userEmail);
+    }
+  } catch (err) {
+    console.log("[Gemini] Exception fetching user info:", err);
+  }
+  
+  // Now insert metrics into CarbonSight table with user info
+  const recordsWithUserInfo = results.map(result => ({
+    ...result,
+    user_email: userEmail,
+    team: userTeam
+    // Removed prompt_text since it doesn't exist in your table
+  }));
+  
+  console.log("[Gemini] Prepared records for insertion:", {
+    userEmail,
+    userTeam,
+    recordCount: recordsWithUserInfo.length,
+    firstRecord: recordsWithUserInfo[0]
+  });
+  
+  try {
+    // First, let's check what columns exist in the CarbonSight table
+    const { data: tableCheck, error: tableError } = await supabase
       .from('CarbonSight')
       .select('*')
       .limit(1);
     
-    console.log("[Gemini] Table structure check:", { tableData, tableError });
-    console.log("[Gemini] Available columns:", tableData?.[0] ? Object.keys(tableData[0]) : "No data");
-  } catch (err) {
-    console.log("[Gemini] Error checking table structure:", err);
-  }
-  
-  // Try inserting with user_email as text
-  const recordsWithEmail = results.map(result => ({
-    ...result,
-    user_email: userEmail
-  }));
-  
-  try {
+    console.log("[Gemini] CarbonSight table structure check:", {
+      hasData: !!tableCheck,
+      columns: tableCheck?.[0] ? Object.keys(tableCheck[0]) : 'No existing data',
+      tableError
+    });
+    
     const { data, error } = await supabase
       .from('CarbonSight')
-      .insert(recordsWithEmail);
+      .insert(recordsWithUserInfo);
     
     if (error) {
-      console.log("[Gemini] Error inserting data:", error);
+      console.log("[Gemini] Error inserting metrics data:", error);
       console.log("[Gemini] Error details:", {
         code: error.code,
         message: error.message,
         details: error.details,
         hint: error.hint
       });
+      
+      console.log("[Gemini] Attempted to insert records:", recordsWithUserInfo);
+      
+      // Try with just team field to see if that's the issue
+      console.log("[Gemini] Trying with team field only");
+      const teamOnlyRecords = results.map(result => ({
+        model_name: result.model_name,
+        latency: result.latency,
+        cost: result.cost,
+        gco2_emissions: result.gco2_emissions,
+        created_at: result.created_at,
+        user_email: userEmail,
+        team: userTeam
+      }));
+      
+      const { data: teamData, error: teamError } = await supabase
+        .from('CarbonSight')
+        .insert(teamOnlyRecords);
+        
+      if (teamError) {
+        console.log("[Gemini] Team field also failed:", teamError);
+        
+        // Final fallback without team field
+        console.log("[Gemini] Final fallback without team field");
+        const fallbackRecords = results.map(result => ({
+          model_name: result.model_name,
+          latency: result.latency,
+          cost: result.cost,
+          gco2_emissions: result.gco2_emissions,
+          created_at: result.created_at,
+          user_email: userEmail
+        }));
+        
+        const { data: fallbackData, error: fallbackError } = await supabase
+          .from('CarbonSight')
+          .insert(fallbackRecords);
+          
+        if (fallbackError) {
+          console.log("[Gemini] Final fallback also failed:", fallbackError);
+        } else {
+          console.log("[Gemini] Final fallback succeeded (without team):", fallbackData);
+        }
+      } else {
+        console.log("[Gemini] Team insertion succeeded:", teamData);
+      }
     } else {
-      console.log("[Gemini] Data inserted successfully:", data);
+      console.log("[Gemini] Metrics data inserted successfully with team:", data);
+      console.log("[Gemini] Inserted records included team:", userTeam);
     }
   } catch (err) {
-    console.log("[Gemini] Exception inserting data:", err);
+    console.log("[Gemini] Exception inserting metrics data:", err);
   }
   
   return results;
@@ -552,7 +651,7 @@ function HomePage() {
 
 /* ---------------- OTP Login Modal (beautiful) ---------------- */
 function LoginModal({ onClose }: { onClose: () => void }) {
-  const { sendOTP, verifyOTP } = useAuth();
+  const { checkEmailExists, sendOTP, verifyOTP } = useAuth();
   const nav = useNavigate();
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
@@ -560,18 +659,34 @@ function LoginModal({ onClose }: { onClose: () => void }) {
   const [step, setStep] = useState<'email' | 'otp' | 'team'>('email');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isNewUser, setIsNewUser] = useState(false); // Track if user went through team selection
 
-  const teams = ['ML', 'Engineering', 'Finance', 'Research', 'HR'];
+  const teams = ['HR', 'AI', 'Research', 'Engineering', 'Finance'];
 
   async function handleSendOTP(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    console.log("[LoginModal] Processing email:", { email, step });
     try {
-      await sendOTP(email);
-      setStep('otp');
+      // First check if email exists
+      const emailExists = await checkEmailExists(email);
+      console.log("[LoginModal] Email exists check result:", { email, emailExists });
+      
+      if (emailExists) {
+        // Email exists, send OTP for login
+        console.log("[LoginModal] Existing user, sending OTP directly");
+        setIsNewUser(false);
+        await sendOTP(email);
+        setStep('otp');
+      } else {
+        // Email doesn't exist, ask for team selection first
+        console.log("[LoginModal] New user, showing team selection");
+        setIsNewUser(true);
+        setStep('team');
+      }
     } catch (err: any) {
-      setError(err?.message || "Failed to send OTP");
+      setError(err?.message || "Failed to process login request");
     } finally {
       setLoading(false);
     }
@@ -581,15 +696,24 @@ function LoginModal({ onClose }: { onClose: () => void }) {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    console.log("[LoginModal] Verifying OTP:", { email, team, isNewUser, step });
     try {
       const result = await verifyOTP(email, otp);
-      if (result.isNewUser) {
-        setStep('team');
+      
+      // Use our tracked isNewUser flag instead of the result from verifyOTP
+      if (isNewUser && team) {
+        // For new users who came through team selection, store their team info
+        console.log("[LoginModal] Storing new user with team:", { email, team });
+        await storeUserWithTeam(email, team);
+      } else if (isNewUser && !team) {
+        console.log("[LoginModal] Warning: New user but no team selected");
       } else {
-        // Existing user, go directly to chat
-        onClose();
-        nav("/chat");
+        console.log("[LoginModal] Existing user, no storage needed");
       }
+      
+      // Both new and existing users go to chat
+      onClose();
+      nav("/chat");
     } catch (err: any) {
       setError(err?.message || "Invalid OTP");
     } finally {
@@ -597,36 +721,56 @@ function LoginModal({ onClose }: { onClose: () => void }) {
     }
   }
 
+  async function storeUserWithTeam(userEmail: string, userTeam: string) {
+    if (!supabase || !userTeam) {
+      console.log("[Auth] storeUserWithTeam called with missing data:", { userEmail, userTeam, hasSupabase: !!supabase });
+      return;
+    }
+    
+    console.log("[Auth] Storing user with team:", { userEmail, userTeam });
+    
+    try {
+      // Store user registration in the login table
+      const { data, error } = await supabase
+        .from('login')
+        .insert([{ 
+          user_email: userEmail,
+          team: userTeam
+        }]);
+      
+      if (error) {
+        console.log("[Auth] Error storing user data:", error);
+        // Try without team field if that fails
+        const { data: data2, error: error2 } = await supabase
+          .from('login')
+          .insert([{ 
+            user_email: userEmail
+          }]);
+        
+        if (error2) {
+          console.log("[Auth] Error storing user data without team:", error2);
+        } else {
+          console.log("[Auth] User data stored successfully without team:", data2);
+        }
+      } else {
+        console.log("[Auth] User data stored successfully with team:", data);
+      }
+    } catch (err) {
+      console.log("[Auth] Exception storing user data:", err);
+    }
+  }
+
   async function handleTeamSelection(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    console.log("[LoginModal] Team selection:", { email, team, step });
     try {
-      // Store user with team information
-      if (supabase) {
-        const { data, error } = await supabase
-          .from('CarbonSight')
-          .insert([{ 
-            model_name: 'user_registration',
-            latency: 0,
-            cost: 0,
-            gco2_emissions: 0,
-            created_at: new Date().toISOString(),
-            prompt_text: `User registered: ${email} (Team: ${team})`,
-            user_email_text: email,
-            team: team
-          }]);
-        
-        if (error) {
-          console.log("[Auth] Error storing user data:", error);
-        } else {
-          console.log("[Auth] User data stored successfully:", data);
-        }
-      }
-      onClose();
-      nav("/chat");
+      // For new users, send OTP after team selection
+      await sendOTP(email);
+      setStep('otp');
     } catch (err: any) {
-      setError(err?.message || "Failed to complete registration");
+      setError(err?.message || "Failed to send OTP");
     } finally {
       setLoading(false);
     }
@@ -694,7 +838,7 @@ function LoginModal({ onClose }: { onClose: () => void }) {
                 className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-black hover:bg-emerald-400 disabled:opacity-70"
               >
                 <Send className="h-4 w-4" />
-                {loading ? "Sending OTP..." : "Send OTP"}
+                {loading ? "Processing..." : "Continue"}
               </button>
             </form>
           )}
@@ -739,7 +883,12 @@ function LoginModal({ onClose }: { onClose: () => void }) {
 
               <button
                 type="button"
-                onClick={() => setStep('email')}
+                onClick={() => {
+                  setStep('email');
+                  setOtp('');
+                  setTeam('');
+                  setIsNewUser(false);
+                }}
                 className="w-full text-xs text-slate-400 hover:text-slate-200"
               >
                 ← Back to email
@@ -770,7 +919,7 @@ function LoginModal({ onClose }: { onClose: () => void }) {
                   ))}
                 </select>
                 <p className="mt-1 text-xs text-slate-500">
-                  This helps us understand our user base better
+                  Welcome! Since you're new, please select your team to get started.
                 </p>
               </div>
 
@@ -785,8 +934,20 @@ function LoginModal({ onClose }: { onClose: () => void }) {
                 disabled={loading || !team}
                 className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-black hover:bg-emerald-400 disabled:opacity-70"
               >
-                <LogIn className="h-4 w-4" />
-                {loading ? "Completing..." : "Complete Registration"}
+                <Send className="h-4 w-4" />
+                {loading ? "Sending OTP..." : "Send OTP"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setStep('email');
+                  setTeam('');
+                  setIsNewUser(false);
+                }}
+                className="w-full text-xs text-slate-400 hover:text-slate-200"
+              >
+                ← Back to email
               </button>
             </form>
           )}
@@ -1319,117 +1480,207 @@ useEffect(() => {
     </div>
   );
 }
-
+function Card({
+  title,
+  icon,
+  children,
+}: {
+  title: string;
+  icon?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+      <div className="mb-1 flex items-center gap-2 text-sm text-slate-300">
+        {icon} {title}
+      </div>
+      <div className="text-2xl font-semibold">{children}</div>
+    </div>
+  );
+}
 /* ---------------- Screen 3: Dashboard ---------------- */
 function DashboardScreen() {
   const nav = useNavigate();
   const { logout } = useAuth();
-  const snapshot = { csi: 78, carbon: 420, tvl: "$2.4M" };
-  const trend = [
-    { t: "09:00", energy: 12, co2: 7 },
-    { t: "10:00", energy: 15, co2: 9 },
-    { t: "11:00", energy: 18, co2: 10 },
-    { t: "12:00", energy: 14, co2: 8 },
-    { t: "13:00", energy: 20, co2: 11 },
-    { t: "14:00", energy: 17, co2: 9 },
-  ];
-  const leaders = [
-    { model: "efficient-8x7b", energy: 0.7, co2: 0.28, score: 98 },
-    { model: "xl-70b",        energy: 1.2, co2: 0.51, score: 90 },
-    { model: "mix-13b",       energy: 0.9, co2: 0.39, score: 94 },
-  ];
+
+  // Load team averages from Supabase (via RPC)
+  const [rows, setRows] = useState<TeamAverages[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await fetchTeamAverages();
+        setRows(data);
+      } catch (e: any) {
+        setErr(e?.message ?? String(e));
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  // Snapshot cards (weighted by user_count)
+  const snapshot = useMemo(() => {
+    if (!rows || rows.length === 0) return { csi: 78, carbon: 0, tvl: "$—" }; // fallbacks
+    const totalUsers = rows.reduce((s, r) => s + (r.user_count ?? 0), 0) || 1;
+    const w = (k: keyof TeamAverages) =>
+      rows.reduce((s, r) => s + Number(r[k]) * (r.user_count ?? 0), 0) / totalUsers;
+
+    return {
+      csi: Math.round(80 + Math.random() * 10), // demo KPI for now
+      carbon: Number(w("avg_co2_kg").toFixed(2)),
+      tvl: `$${(rows.length * 0.5).toFixed(1)}M`, // demo placeholder
+    };
+  }, [rows]);
+
+  // Chart datasets
+  const co2Data = (rows ?? []).map((r) => ({ team: r.team, value: Number(r.avg_co2_kg) }));
+  const latencyData = (rows ?? []).map((r) => ({ team: r.team, value: Number(r.avg_latency_ms) }));
+
+  // Sort table by lowest CO2 first
+  const teamBoard = [...(rows ?? [])].sort(
+    (a, b) => Number(a.avg_co2_kg) - Number(b.avg_co2_kg)
+  );
 
   return (
     <div className="min-h-screen bg-[#0b1115] text-slate-100">
       <BackdropGlow />
       <header className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4">
-        <div className="flex items-center gap-2"><BarChart3 className="h-5 w-5 text-emerald-300" /><span className="font-semibold">Dashboard</span></div>
         <div className="flex items-center gap-2">
-          <Link to="/chat" className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-sm hover:bg-white/10">Chat</Link>
-          <button onClick={async ()=>{await logout(); nav("/");}} className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-sm hover:bg-white/10">
+          <BarChart3 className="h-5 w-5 text-emerald-300" />
+          <span className="font-semibold">Dashboard</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Link
+            to="/chat"
+            className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-sm hover:bg-white/10"
+          >
+            Chat
+          </Link>
+          <button
+            onClick={async () => {
+              await logout();
+              nav("/");
+            }}
+            className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-sm hover:bg-white/10"
+          >
             <LogOut className="mr-1 inline-block h-4 w-4" /> Logout
           </button>
         </div>
       </header>
 
       <main className="mx-auto max-w-7xl px-4 pb-24">
+        {/* KPI Cards */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <Card title="CSI Now" icon={<Zap className="h-4 w-4 text-emerald-300" />}>{snapshot.csi}</Card>
-          <Card title="Carbon Intensity (g/kWh)" icon={<Leaf className="h-4 w-4 text-emerald-300" />}>{snapshot.carbon}</Card>
-          <Card title="Pool TVL" icon={<Award className="h-4 w-4 text-emerald-300" />}>{snapshot.tvl}</Card>
+          <Card title="CSI Now" icon={<Zap className="h-4 w-4 text-emerald-300" />}>
+            {snapshot.csi}
+          </Card>
+          <Card title="Avg CO₂ per Team (kg)" icon={<Leaf className="h-4 w-4 text-emerald-300" />}>
+            {loading ? "…" : snapshot.carbon}
+          </Card>
+          <Card title="Pool TVL" icon={<Award className="h-4 w-4 text-emerald-300" />}>
+            {snapshot.tvl}
+          </Card>
         </div>
 
+        {/* Charts */}
         <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
+          {/* Average CO₂ by Team */}
           <div className="rounded-2xl border border-white/10 bg-white/5 p-4 lg:col-span-2">
-            <div className="mb-2 flex items-center gap-2 text-sm text-slate-300"><ChartLine className="h-4 w-4" /> Energy Trend</div>
+            <div className="mb-2 flex items-center gap-2 text-sm text-slate-300">
+              <ChartLine className="h-4 w-4" /> Average CO₂ by Team (kg)
+            </div>
             <div className="h-64 w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={trend} margin={{ left: 0, right: 0, top: 10, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#10B981" stopOpacity={0.5} />
-                      <stop offset="95%" stopColor="#10B981" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
+                <RBarChart data={co2Data}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
-                  <XAxis dataKey="t" stroke="#9CA3AF" />
+                  <XAxis dataKey="team" stroke="#9CA3AF" />
                   <YAxis stroke="#9CA3AF" />
-                  <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, color: "#e5e7eb" }} />
-                  <Area type="monotone" dataKey="energy" stroke="#10B981" fill="url(#g1)" strokeWidth={2} />
-                </AreaChart>
+                  <Tooltip
+                    contentStyle={{
+                      background: "#0f172a",
+                      border: "1px solid rgba(255,255,255,0.1)",
+                      borderRadius: 12,
+                      color: "#e5e7eb",
+                    }}
+                  />
+                  <Bar dataKey="value" name="Avg CO₂ (kg)" fill="#10B981" radius={[6, 6, 0, 0]} />
+                </RBarChart>
               </ResponsiveContainer>
             </div>
           </div>
+
+          {/* Average Latency by Team */}
           <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <div className="mb-2 text-sm text-slate-300">Jobs by Hour</div>
+            <div className="mb-2 text-sm text-slate-300">Average Latency by Team (ms)</div>
             <div className="h-64 w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <RBarChart data={trend}>
+                <RBarChart data={latencyData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
-                  <XAxis dataKey="t" stroke="#9CA3AF" />
+                  <XAxis dataKey="team" stroke="#9CA3AF" />
                   <YAxis stroke="#9CA3AF" />
-                  <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, color: "#e5e7eb" }} />
-                  <Bar dataKey="co2" fill="#10B981" radius={[6, 6, 0, 0]} />
+                  <Tooltip
+                    contentStyle={{
+                      background: "#0f172a",
+                      border: "1px solid rgba(255,255,255,0.1)",
+                      borderRadius: 12,
+                      color: "#e5e7eb",
+                    }}
+                  />
+                  <Bar dataKey="value" name="Avg Latency (ms)" fill="#10B981" radius={[6, 6, 0, 0]} />
                 </RBarChart>
               </ResponsiveContainer>
             </div>
           </div>
         </div>
 
+        {/* Team Averages Table */}
         <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-4">
-          <div className="mb-3 text-sm text-slate-300">Leaderboard (lower energy is better)</div>
+          <div className="mb-3 text-sm text-slate-300">Team Averages (from Supabase)</div>
+          {err && <p className="text-rose-400 text-sm">{err}</p>}
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="text-slate-400">
-                  <th className="px-3 py-2">Model</th>
-                  <th className="px-3 py-2">Energy (Wh / 1K tok)</th>
-                  <th className="px-3 py-2">CO₂e (g / 1K tok)</th>
-                  <th className="px-3 py-2">Quality</th>
+                  <th className="px-3 py-2">Team</th>
+                  <th className="px-3 py-2">Users</th>
+                  <th className="px-3 py-2">Avg CO₂ (kg)</th>
+                  <th className="px-3 py-2">Avg Cost (USD)</th>
+                  <th className="px-3 py-2">Avg Latency (ms)</th>
                 </tr>
               </thead>
               <tbody>
-                {leaders.map((r) => (
-                  <tr key={r.model} className="odd:bg-white/0 even:bg-white/5">
-                    <td className="px-3 py-2 font-medium">{r.model}</td>
-                    <td className="px-3 py-2">{r.energy.toFixed(2)}</td>
-                    <td className="px-3 py-2">{r.co2.toFixed(2)}</td>
-                    <td className="px-3 py-2">{r.score}</td>
+                {loading && (
+                  <tr>
+                    <td className="px-3 py-4 text-slate-400" colSpan={5}>
+                      Loading…
+                    </td>
                   </tr>
-                ))}
+                )}
+                {!loading &&
+                  teamBoard.map((r) => (
+                    <tr key={r.team} className="odd:bg-white/0 even:bg-white/5">
+                      <td className="px-3 py-2 font-medium">{r.team}</td>
+                      <td className="px-3 py-2">{r.user_count}</td>
+                      <td className="px-3 py-2">{Number(r.avg_co2_kg).toFixed(2)}</td>
+                      <td className="px-3 py-2">{Number(r.avg_cost_usd).toFixed(2)}</td>
+                      <td className="px-3 py-2">{Number(r.avg_latency_ms).toFixed(0)}</td>
+                    </tr>
+                  ))}
+                {!loading && (!rows || rows.length === 0) && (
+                  <tr>
+                    <td className="px-3 py-4 text-slate-400" colSpan={5}>
+                      No data yet.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
         </div>
       </main>
-    </div>
-  );
-}
-function Card({ title, icon, children }: { title: string; icon?: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-      <div className="mb-1 flex items-center gap-2 text-sm text-slate-300">{icon} {title}</div>
-      <div className="text-2xl font-semibold">{children}</div>
     </div>
   );
 }
