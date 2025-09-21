@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { BrowserRouter, Routes, Route, Link, Navigate, useNavigate } from "react-router-dom";
 import {
   motion,
@@ -32,10 +32,14 @@ import {
   AreaChart, Area,
   CartesianGrid, XAxis, YAxis, Tooltip,
   BarChart as RBarChart, Bar,
+  // NEW:
+  LineChart, Line,
+  PieChart, Pie, Cell, Legend,
+  ErrorBar,
 } from "recharts";
 import CarbonSightLogo from "./CarbonSightLockup";
 import type { TeamAverages } from "./models/metrics";
-import { fetchTeamAverages } from "./api/metrics";
+import { fetchTeamAveragesFromView } from "./api/metrics";
 
 // FX
 import WaterBurstFX from "./WaterBurst";
@@ -92,6 +96,7 @@ const useAuth = () => {
   if (!v) throw new Error("useAuth must be used inside <AuthProvider>");
   return v;
 };
+
 function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
 
@@ -1105,6 +1110,8 @@ function ChatScreen() {
   const playedColorsRef = useRef<Set<"green" | "red">>(new Set());
   const burstPlayedRef = useRef(false);
 
+    const [uiAutoBest, setUiAutoBest] = useState(false);
+
   // Per-prompt analysis rows keyed by message index
 const [analyses, setAnalyses] = useState<Record<number, EstRow[]>>({});
 // Which message index is currently showing the info modal
@@ -1547,36 +1554,57 @@ useEffect(() => {
 
         {/* Composer */}
         <footer className="relative z-20 border-t border-white/10 p-3">
-          <div className="mx-auto max-w-4xl">
-            <div className="flex items-end gap-2 rounded-2xl border border-white/10 bg-black/30 p-2">
-              <textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Ask CarbonSight…"
-                rows={1}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    sendMessage();
-                  }
-                }}
-                className="min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-slate-500"
-              />
-              <button
-                onClick={sendMessage}
-                className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-3 py-2 text-sm font-semibold text-black hover:bg-emerald-400 disabled:opacity-70"
-                disabled={!input.trim()}
-              >
-                <Send className="h-4 w-4" />
-                <span className="hidden sm:inline">Send</span>
-              </button>
-            </div>
-            <p className="mt-2 text-center text-[11px] text-slate-500">
-              Burst plays once per color — <span className="text-emerald-300">green</span> for sustainable/balanced,{" "}
-              <span className="text-rose-400">red</span> for intensive.
-            </p>
-          </div>
-        </footer>
+  <div className="mx-auto max-w-4xl">
+    <div className="flex items-end gap-2 rounded-2xl border border-white/10 bg-black/30 p-2">
+      {/* ⬇️ inert toggle starts */}
+      <div className="flex items-center gap-2 self-center px-1">
+        <span className="text-[11px] text-slate-400">Auto Best</span>
+        <button
+          type="button"
+          aria-pressed={uiAutoBest}
+          onClick={() => setUiAutoBest(v => !v)}
+          className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
+            uiAutoBest ? "bg-emerald-500" : "bg-white/10"
+          }`}
+          title="Auto-select best model (UI only)"
+        >
+          <span
+            className={`inline-block h-5 w-5 transform rounded-full bg-white transition ${
+              uiAutoBest ? "translate-x-5" : "translate-x-1"
+            }`}
+          />
+        </button>
+      </div>
+      {/* ⬆️ inert toggle ends */}
+
+      <textarea
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
+        placeholder="Ask CarbonSight…"
+        rows={1}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+          }
+        }}
+        className="min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-slate-500"
+      />
+      <button
+        onClick={sendMessage}
+        className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-3 py-2 text-sm font-semibold text-black hover:bg-emerald-400 disabled:opacity-70"
+        disabled={!input.trim()}
+      >
+        <Send className="h-4 w-4" />
+        <span className="hidden sm:inline">Send</span>
+      </button>
+    </div>
+    <p className="mt-2 text-center text-[11px] text-slate-500">
+      Burst plays once per color — <span className="text-emerald-300">green</span> for sustainable/balanced,{" "}
+      <span className="text-rose-400">red</span> for intensive.
+    </p>
+  </div>
+</footer>
         
       </section>
     </div>
@@ -1711,48 +1739,71 @@ function Card({
 }
 /* Duplicate PromptInfoModal removed to fix compile error */
 /* ---------------- Screen 3: Dashboard ---------------- */
+// add these imports if not present:
+
+
+/* ---------------- Screen 3: Dashboard ---------------- */
 function DashboardScreen() {
   const nav = useNavigate();
   const { logout } = useAuth();
 
-  // Load team averages from Supabase (via RPC)
-  const [rows, setRows] = useState<TeamAverages[] | null>(null);
+  // Live team averages from Supabase (computed from public.user_metrics)
+  const [rows, setRows] = useState<TeamAverages[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const data = await fetchTeamAverages();
-        setRows(data);
-      } catch (e: any) {
-        setErr(e?.message ?? String(e));
-      } finally {
-        setLoading(false);
-      }
-    })();
+  const load = useCallback(async () => {
+    try {
+      setLoading(true);
+      const data = await fetchTeamAveragesFromView(); // <-- reads from public.user_metrics
+      setRows(data);
+      setErr(null);
+    } catch (e: any) {
+      setErr(e?.message ?? String(e));
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  // Snapshot cards (weighted by user_count)
+  useEffect(() => {
+    // initial fetch
+    load();
+
+    // subscribe to realtime changes in public.user_metrics → refresh charts
+    const channel = supabase
+      ?.channel("realtime:user_metrics")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "user_metrics" },
+        () => load()
+      )
+      .subscribe();
+
+    return () => {
+      channel?.unsubscribe();
+    };
+  }, [load]);
+
+  // Snapshot cards (weighted by num_entries)
   const snapshot = useMemo(() => {
-    if (!rows || rows.length === 0) return { csi: 78, carbon: 0, tvl: "$—" }; // fallbacks
-    const totalUsers = rows.reduce((s, r) => s + (r.user_count ?? 0), 0) || 1;
-    const w = (k: keyof TeamAverages) =>
-      rows.reduce((s, r) => s + Number(r[k]) * (r.user_count ?? 0), 0) / totalUsers;
+    if (rows.length === 0) return { csi: 78, carbon: 0, tvl: "$—" };
+    const totalUsers = rows.reduce((s, r) => s + (r.num_entries ?? 0), 0) || 1;
+    const weightedCarbon = rows.reduce((s, r) => s + Number(r.avg_co2_kg) * (r.num_entries ?? 0), 0) / totalUsers;
 
     return {
       csi: Math.round(80 + Math.random() * 10), // demo KPI for now
-      carbon: Number(w("avg_co2_kg").toFixed(2)),
-      tvl: `$${(rows.length * 0.5).toFixed(1)}M`, // demo placeholder
+      carbon: Number(weightedCarbon.toFixed(2)),
+      tvl: `$${(rows.length * 0.5).toFixed(1)}M`, // placeholder
     };
   }, [rows]);
 
   // Chart datasets
-  const co2Data = (rows ?? []).map((r) => ({ team: r.team, value: Number(r.avg_co2_kg) }));
-  const latencyData = (rows ?? []).map((r) => ({ team: r.team, value: Number(r.avg_latency_ms) }));
+  const co2Data = rows.map((r) => ({ team: r.team, value: Number(r.avg_co2_kg) || 0 }));
+  const latencyData = rows.map((r) => ({ team: r.team, value: Number(r.avg_latency_ms) || 0 }));
+  const costData = rows.map((r) => ({ team: r.team, value: Number(r.avg_cost_usd) || 0 }));
 
   // Sort table by lowest CO2 first
-  const teamBoard = [...(rows ?? [])].sort(
+  const teamBoard = [...rows].sort(
     (a, b) => Number(a.avg_co2_kg) - Number(b.avg_co2_kg)
   );
 
@@ -1800,7 +1851,7 @@ function DashboardScreen() {
         {/* Charts */}
         <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
           {/* Average CO₂ by Team */}
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4 lg:col-span-2">
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
             <div className="mb-2 flex items-center gap-2 text-sm text-slate-300">
               <ChartLine className="h-4 w-4" /> Average CO₂ by Team (kg)
             </div>
@@ -1824,6 +1875,30 @@ function DashboardScreen() {
             </div>
           </div>
 
+          {/* Average Cost by Team */}
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <div className="mb-2 text-sm text-slate-300">Average Cost by Team (USD)</div>
+            <div className="h-64 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <RBarChart data={costData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+                  <XAxis dataKey="team" stroke="#9CA3AF" />
+                  <YAxis stroke="#9CA3AF" />
+                  <Tooltip
+                    contentStyle={{
+                      background: "#0f172a",
+                      border: "1px solid rgba(255,255,255,0.1)",
+                      borderRadius: 12,
+                      color: "#e5e7eb",
+                    }}
+                    formatter={(value) => [`$${Number(value).toFixed(4)}`, "Avg Cost (USD)"]}
+                  />
+                  <Bar dataKey="value" name="Avg Cost (USD)" fill="#3B82F6" radius={[6, 6, 0, 0]} />
+                </RBarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
           {/* Average Latency by Team */}
           <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
             <div className="mb-2 text-sm text-slate-300">Average Latency by Team (ms)</div>
@@ -1841,7 +1916,7 @@ function DashboardScreen() {
                       color: "#e5e7eb",
                     }}
                   />
-                  <Bar dataKey="value" name="Avg Latency (ms)" fill="#10B981" radius={[6, 6, 0, 0]} />
+                  <Bar dataKey="value" name="Avg Latency (ms)" fill="#F59E0B" radius={[6, 6, 0, 0]} />
                 </RBarChart>
               </ResponsiveContainer>
             </div>
@@ -1850,14 +1925,14 @@ function DashboardScreen() {
 
         {/* Team Averages Table */}
         <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-4">
-          <div className="mb-3 text-sm text-slate-300">Team Averages (from Supabase)</div>
+          <div className="mb-3 text-sm text-slate-300">Team Averages (from public.user_metrics)</div>
           {err && <p className="text-rose-400 text-sm">{err}</p>}
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="text-slate-400">
                   <th className="px-3 py-2">Team</th>
-                  <th className="px-3 py-2">Users</th>
+                  <th className="px-3 py-2">Team Size</th>
                   <th className="px-3 py-2">Avg CO₂ (kg)</th>
                   <th className="px-3 py-2">Avg Cost (USD)</th>
                   <th className="px-3 py-2">Avg Latency (ms)</th>
@@ -1875,15 +1950,15 @@ function DashboardScreen() {
                   teamBoard.map((r) => (
                     <tr key={r.team} className="odd:bg-white/0 even:bg-white/5">
                       <td className="px-3 py-2 font-medium">{r.team}</td>
-                      <td className="px-3 py-2">{r.user_count}</td>
-                      <td className="px-3 py-2">{Number(r.avg_co2_kg).toFixed(2)}</td>
-                      <td className="px-3 py-2">{Number(r.avg_cost_usd).toFixed(2)}</td>
+                      <td className="px-3 py-2">{r.num_entries}</td>
+                      <td className="px-3 py-2">{Number(r.avg_co2_kg).toFixed(3)}</td>
+                      <td className="px-3 py-2">{Number(r.avg_cost_usd).toFixed(4)}</td>
                       <td className="px-3 py-2">{Number(r.avg_latency_ms).toFixed(0)}</td>
                     </tr>
                   ))}
-                {!loading && (!rows || rows.length === 0) && (
+                {!loading && rows.length === 0 && (
                   <tr>
-                    <td className="px-3 py-4 text-slate-400" colSpan={5}>
+                    <td className="px-3 py-4 text-slate-400" colSpan={4}>
                       No data yet.
                     </td>
                   </tr>

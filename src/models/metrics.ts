@@ -16,7 +16,7 @@ export interface UserMetrics {
 
 export interface TeamAverages {
   team: TeamName;
-  user_count: number;
+  num_entries: number;
   avg_co2_kg: number;
   avg_cost_usd: number;
   avg_latency_ms: number;
