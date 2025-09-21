@@ -1,10 +1,18 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { BrowserRouter, Routes, Route, Link, Navigate, useNavigate } from "react-router-dom";
-import { motion } from "framer-motion";
+import {
+  motion,
+  useMotionValue,
+  useTransform,
+  useSpring,
+  useMotionTemplate,
+  animate,
+} from "framer-motion";
 import { createClient } from "@supabase/supabase-js";
 import type { Session, User } from "@supabase/supabase-js";
 import { Menu, ChevronLeft, ChevronRight, X } from "lucide-react";
 import NeuralEnergyWeb from "./NeuralEnergyWeb";
+
 import {
   LogIn,
   LogOut,
@@ -1024,10 +1032,55 @@ function EcoWaveDeco() {
 }
 
 /* ---------------- Screen 2: Chat (modern, polished, hideable sidebar) ---------------- */
-type EstRow = { model: string; costUsdPer1k: number; co2Per1k: number; latencyMsP95: number };
 
+type EstRow = {
+  modelId: string;
+  model: string;
+  costUSD: number;
+  co2kg: number;
+  latencyMs: number;
+  tokens: number;
+};
+
+const MODEL_FACTORS: Record<string, {
+  label: string;
+  costPer1K: number;     // USD / 1K tokens
+  co2Per1K: number;      // kg CO2e / 1K tokens
+  baseLatency: number;   // ms baseline for tiny prompt
+}> = {
+  "gemini-2.5-pro":        { label: "gemini-2.5-pro",        costPer1K: 0.0076, co2Per1K: 0.6313, baseLatency: 721.43 },
+  "gemini-2.5-flash":      { label: "gemini-2.5-flash",      costPer1K: 0.0037, co2Per1K: 0.3285, baseLatency: 1013.89 },
+  "gemini-2.5-flash-lite": { label: "gemini-2.5-flash-lite", costPer1K: 0.0012, co2Per1K: 0.1225, baseLatency: 1225.00 },
+  "gemini-1.5-pro":        { label: "gemini-1.5-pro",        costPer1K: 0.0121, co2Per1K: 0.9075, baseLatency: 756.25 },
+  "gemini-1.5-flash":      { label: "gemini-1.5-flash",      costPer1K: 0.0051, co2Per1K: 0.4050, baseLatency: 1012.50 },
+  "gemini-1.5-flash-lite": { label: "gemini-1.5-flash-lite", costPer1K: 0.0023, co2Per1K: 0.1830, baseLatency: 1270.83 },
+};
+
+function estTokens(prompt: string) {
+  const t = Math.ceil((prompt.trim().length || 1) / 4); // ~4 chars / token
+  return Math.max(1, t);
+}
+
+function computeRows(prompt: string): EstRow[] {
+  const tokens = estTokens(prompt);
+  const k = tokens / 1000;
+
+  return Object.entries(MODEL_FACTORS).map(([modelId, f]) => {
+    // small latency growth with prompt size
+    const latency = f.baseLatency + Math.sqrt(tokens) * 6; // tweakable
+    return {
+      modelId,
+      model: f.label,
+      costUSD: +(k * f.costPer1K).toFixed(4),
+      co2kg: +(k * f.co2Per1K).toFixed(4),
+      latencyMs: +latency.toFixed(2),
+      tokens,
+    };
+  });
+}
+type BaselineRow = { model: string; costUsdPer1k: number; co2Per1k: number; latencyMsP95: number };
 /** Static baseline rows to match your screenshot feel. */
-const GEMINI_BASELINES: EstRow[] = [
+const GEMINI_BASELINES: BaselineRow[] = [
   { model: "gemini-2.5-pro",       costUsdPer1k: 0.0076, co2Per1k: 0.6313, latencyMsP95: 721.43 },
   { model: "gemini-2.5-flash",     costUsdPer1k: 0.0037, co2Per1k: 0.3285, latencyMsP95: 1013.89 },
   { model: "gemini-2.5-flash-lite",costUsdPer1k: 0.0012, co2Per1k: 0.1225, latencyMsP95: 1225.00 },
@@ -1529,6 +1582,117 @@ useEffect(() => {
     </div>
   );
 }
+function AnimatedNumber({ value, decimals = 2 }: { value: number; decimals?: number }) {
+  const mv = useMotionValue(0);
+  const [display, setDisplay] = useState(0);
+  useEffect(() => {
+    const controls = animate(mv, value, {
+      duration: 0.35,
+      onUpdate: (v) => setDisplay(v),
+    });
+    return () => controls.stop();
+  }, [value]);
+  return <span>{display.toFixed(decimals)}</span>;
+}
+
+function PromptInfoModal({
+  prompt,
+  rows,          // optional seed rows from your `analyses[index]` map
+  onClose,
+}: {
+  prompt: string;
+  rows?: EstRow[];
+  onClose: () => void;
+}) {
+  // Live local calc every render
+  const live = useMemo(() => computeRows(prompt), [prompt]);
+
+  // Optional: merge with realtime rows coming from Supabase (table example: "prompt_metrics")
+  const [remoteRows, setRemoteRows] = useState<EstRow[]>(rows ?? []);
+  useEffect(() => setRemoteRows(rows ?? []), [rows]);
+
+  useEffect(() => {
+    // Skip if you don't have supabase set up yet
+    // Example realtime feed keyed by a prompt hash you store when you insert
+    if (!supabase) return;
+
+    const key = simpleHash(prompt); //  short hash for channel topic
+    const channel = supabase
+      .channel(`metrics_${key}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'prompt_metrics', filter: `prompt_hash=eq.${key}` },
+        (payload: any) => {
+          // Expect rows shaped like EstRow; adapt if your table differs
+          const r: EstRow = payload.new as EstRow;
+          setRemoteRows((prev) => {
+            const map = new Map(prev.map((x) => [x.modelId, x]));
+            map.set(r.modelId, r);
+            return Array.from(map.values());
+          });
+        }
+      )
+      .subscribe();
+
+    return () => { try { supabase.removeChannel(channel); } catch {} };
+  }, [prompt]);
+
+  // Choose: remote overrides live, else live
+  const merged = useMemo(() => {
+    if (!remoteRows.length) return live;
+    const byId = new Map(remoteRows.map(r => [r.modelId, r]));
+    return live.map(r => byId.get(r.modelId) ?? r);
+  }, [live, remoteRows]);
+
+  return (
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/70 p-4">
+      <div className="w-full max-w-3xl rounded-2xl border border-white/10 bg-[#0b1115] p-5 shadow-2xl">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-base font-semibold text-white">Prompt metrics</h3>
+          <button onClick={onClose} className="rounded-lg px-2 py-1 text-slate-400 hover:text-white">✕</button>
+        </div>
+
+        <p className="mb-3 truncate text-sm text-slate-400">“{prompt}”</p>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="text-slate-400">
+                <th className="px-3 py-2">Model</th>
+                <th className="px-3 py-2">Tokens</th>
+                <th className="px-3 py-2">Cost (USD)</th>
+                <th className="px-3 py-2">CO₂ (kg)</th>
+                <th className="px-3 py-2">Latency (ms)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {merged.map((r) => (
+                <tr key={r.modelId} className="odd:bg-white/0 even:bg-white/5">
+                  <td className="px-3 py-2 font-medium">{r.model}</td>
+                  <td className="px-3 py-2">{r.tokens}</td>
+                  <td className="px-3 py-2"><AnimatedNumber value={r.costUSD} decimals={4} /></td>
+                  <td className="px-3 py-2"><AnimatedNumber value={r.co2kg} decimals={4} /></td>
+                  <td className="px-3 py-2"><AnimatedNumber value={r.latencyMs} decimals={2} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <p className="mt-3 text-[11px] text-slate-500">
+          Live client estimates. If your backend streams measurements into <code>prompt_metrics</code>, they’ll override rows in real time.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// tiny prompt hash (good enough for channel key)
+function simpleHash(s: string) {
+  let h = 0; for (let i = 0; i < s.length; i++) h = (h << 5) - h + s.charCodeAt(i), h |= 0;
+  return Math.abs(h).toString(36);
+}
+
 function Card({
   title,
   icon,
@@ -1547,79 +1711,7 @@ function Card({
     </div>
   );
 }
-function PromptInfoModal({
-  prompt,
-  rows,
-  onClose,
-}: {
-  prompt: string;
-  rows: EstRow[];
-  onClose: () => void;
-}) {
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onClick={onClose}>
-      <div
-        className="w-full max-w-3xl overflow-hidden rounded-2xl border border-white/10 bg-[#0b1115] shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-          <div className="flex items-center gap-2">
-            <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-400/20">
-              i
-            </span>
-            <div>
-              <div className="text-sm font-medium text-slate-200">Prompt analysis</div>
-              <div className="max-w-[60ch] truncate text-xs text-slate-400">“{prompt}”</div>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="rounded-lg px-2 py-1 text-slate-400 hover:text-white"
-            aria-label="Close"
-          >
-            ✕
-          </button>
-        </div>
-
-        {/* Table */}
-        <div className="max-h-[70vh] overflow-auto p-4">
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="text-slate-400">
-                <th className="px-3 py-2">Model</th>
-                <th className="px-3 py-2">Cost ($/1k tok)</th>
-                <th className="px-3 py-2">CO₂ (kg/1k tok)</th>
-                <th className="px-3 py-2">Latency (ms p95)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length === 0 && (
-                <tr>
-                  <td className="px-3 py-4 text-slate-400" colSpan={4}>
-                    No data for this prompt.
-                  </td>
-                </tr>
-              )}
-              {rows.map((r) => (
-                <tr key={r.model} className="odd:bg-white/0 even:bg-white/5">
-                  <td className="px-3 py-2 font-medium text-slate-100">{r.model}</td>
-                  <td className="px-3 py-2">${r.costUsdPer1k.toFixed(4)}</td>
-                  <td className="px-3 py-2">{r.co2Per1k.toFixed(4)}</td>
-                  <td className="px-3 py-2">{r.latencyMsP95.toFixed(2)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          <p className="mt-3 text-[11px] text-slate-500">
-            Numbers shown are baseline estimates per 1k tokens. Wire this to your Supabase analysis for live values.
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-}
+/* Duplicate PromptInfoModal removed to fix compile error */
 /* ---------------- Screen 3: Dashboard ---------------- */
 function DashboardScreen() {
   const nav = useNavigate();
