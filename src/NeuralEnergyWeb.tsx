@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 
 type Energy = "sustainable" | "balanced" | "intensive";
@@ -12,9 +12,9 @@ type Props = {
 };
 
 const ENERGY: Record<Energy, { color: string; label: string }> = {
-  sustainable: { color: "#10B981", label: "Sustainable" }, // green
-  balanced: { color: "#F59E0B", label: "Balanced" },       // amber
-  intensive: { color: "#F87171", label: "Intensive" },     // red
+  sustainable: { color: "#10B981", label: "Sustainable" },
+  balanced: { color: "#F59E0B", label: "Balanced" },
+  intensive: { color: "#F87171", label: "Intensive" },  
 };
 
 // tiny deterministic helpers
@@ -82,7 +82,7 @@ export default function NeuralEnergyWeb({
     // Node placement: choose a ring by energy, then a spoke (deterministic)
     type Node = Model & { x: number; y: number; r: number; ringIdx: number; spokeIdx: number };
     const nodes: Node[] = [];
-    models.forEach((m, idx) => {
+    models.forEach((m) => {
       const h = hash(m.id);
       // energy -> ring band
       let ringIdx: number;
@@ -324,9 +324,7 @@ export default function NeuralEnergyWeb({
           })}
         </g>
 
-        {/* ambient fireflies */}
         {[...Array(10)].map((_, i) => {
-          const d = 8 + (i % 5);
           const startX = (i * 83) % width;
           return (
             <motion.circle

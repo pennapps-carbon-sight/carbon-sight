@@ -3,9 +3,6 @@ import { BrowserRouter, Routes, Route, Link, Navigate, useNavigate } from "react
 import {
   motion,
   useMotionValue,
-  useTransform,
-  useSpring,
-  useMotionTemplate,
   animate,
 } from "framer-motion";
 import { createClient } from "@supabase/supabase-js";
@@ -30,7 +27,6 @@ import {
 } from "lucide-react";
 import {
   ResponsiveContainer,
-  AreaChart, Area,
   CartesianGrid, XAxis, YAxis, Tooltip,
   BarChart as RBarChart, Bar,
 } from "recharts";
@@ -1540,7 +1536,10 @@ useEffect(() => {
         </header>
 
          {/* Messages */}
-<div ref={listRef} className="relative z-20 flex-1 space-y-4 overflow-y-auto px-4 py-6">
+<div
+  ref={listRef as React.RefObject<HTMLDivElement>}
+  className="relative z-20 flex-1 space-y-4 overflow-y-auto px-4 py-6"
+>
   {messages.map((m, i) => {
     const mine = m.role === "user";
     return (
@@ -1554,7 +1553,7 @@ useEffect(() => {
         >
           <ReactMarkdown
             components={{
-              code({ node, inline, className, children, ...props }) {
+              code({ inline, className, children, ...props }) {
                 return inline ? (
                   <code className={className} {...props}>
                     {children}
@@ -1570,12 +1569,16 @@ useEffect(() => {
                       overflowX: "auto",
                     }}
                   >
-                    <code>{children}</code>
+                    <code className={className}>{children}</code>
                   </pre>
                 );
               },
-              p({ node, children }) {
-                return <p style={{ margin: "4px 0", whiteSpace: "pre-wrap" }}>{children}</p>;
+              p({ children }) {
+                return (
+                  <p style={{ margin: "4px 0", whiteSpace: "pre-wrap" }}>
+                    {children}
+                  </p>
+                );
               },
             }}
           >
@@ -1597,6 +1600,7 @@ useEffect(() => {
     );
   })}
 </div>
+
 
 {/* Prompt info modal */}
 {infoFor !== null && (
