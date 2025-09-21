@@ -341,18 +341,19 @@ async def real_chat(
         
         if result["success"]:
             # Save real usage data to database
-            await db.log_job(
-                job_id=f"chat_{int(time.time())}",
-                user_id=user_id,
-                model_used=model,
-                tokens_input=int(result["tokens_used"]["input"]),
-                tokens_output=int(result["tokens_used"]["output"]),
-                energy_wh=result["energy_metrics"].energy_kwh * 1000,  # Convert back to Wh
-                co2e_g=result["energy_metrics"].co2_grams,
-                processing_time_ms=result["processing_time_ms"],
-                was_green_swap=False,  # Would need to compare with baseline
-                region=result["energy_metrics"].region
-            )
+            await db.log_ai_request({
+                "prompt": message,
+                "response": result["response_text"],
+                "model_used": model,
+                "user_id": user_id,
+                "team_id": team_id,
+                "latency_ms": int(result["processing_time_ms"]),
+                "cost_usd": 0.0,  # TODO: Calculate real cost
+                "energy_kwh": result["energy_metrics"].energy_kwh,
+                "co2_grams": result["energy_metrics"].co2_grams,
+                "tokens_input": int(result["tokens_used"]["input"]),
+                "tokens_output": int(result["tokens_used"]["output"])
+            })
         
         return {
             "message": result["response_text"],

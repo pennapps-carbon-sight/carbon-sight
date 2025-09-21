@@ -1,4 +1,105 @@
+#!/usr/bin/env python3
 """
+Production setup script for CarbonSight.
+This script sets up the production environment and replaces mock services.
+"""
+
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+def main():
+    """Main setup function."""
+    print("🚀 Setting up CarbonSight for production...")
+    
+    # Check if we're in the right directory
+    if not os.path.exists("main.py"):
+        print("❌ Error: Please run this script from the CarbonSight root directory")
+        sys.exit(1)
+    
+    # Backup original files
+    print("📦 Backing up original files...")
+    backup_dir = Path("backup_original")
+    backup_dir.mkdir(exist_ok=True)
+    
+    files_to_backup = [
+        "database_service.py",
+        "analytics_service.py",
+        "ml_service.py"
+    ]
+    
+    for file in files_to_backup:
+        if os.path.exists(file):
+            shutil.copy2(file, backup_dir / file)
+            print(f"  ✓ Backed up {file}")
+    
+    # Replace with production versions
+    print("🔄 Replacing with production versions...")
+    
+    # Replace database service
+    if os.path.exists("database_service_production.py"):
+        shutil.copy2("database_service_production.py", "database_service.py")
+        print("  ✓ Replaced database_service.py")
+    
+    # Replace analytics service
+    if os.path.exists("analytics_service_production.py"):
+        shutil.copy2("analytics_service_production.py", "analytics_service.py")
+        print("  ✓ Replaced analytics_service.py")
+    
+    # Create production ML service
+    create_production_ml_service()
+    print("  ✓ Created production ml_service.py")
+    
+    # Create environment file if it doesn't exist
+    if not os.path.exists(".env"):
+        if os.path.exists("env.example"):
+            shutil.copy2("env.example", ".env")
+            print("  ✓ Created .env from env.example")
+        else:
+            create_env_file()
+            print("  ✓ Created .env file")
+    
+    # Install Python dependencies
+    print("📦 Installing Python dependencies...")
+    try:
+        subprocess.run([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"], 
+                      check=True, capture_output=True)
+        print("  ✓ Python dependencies installed")
+    except subprocess.CalledProcessError as e:
+        print(f"  ❌ Error installing Python dependencies: {e}")
+        return False
+    
+    # Install Node.js dependencies
+    print("📦 Installing Node.js dependencies...")
+    try:
+        subprocess.run(["npm", "install"], check=True, capture_output=True)
+        print("  ✓ Node.js dependencies installed")
+    except subprocess.CalledProcessError as e:
+        print(f"  ❌ Error installing Node.js dependencies: {e}")
+        return False
+    
+    # Create startup scripts
+    create_startup_scripts()
+    print("  ✓ Created startup scripts")
+    
+    print("\n✅ Production setup complete!")
+    print("\n📋 Next steps:")
+    print("1. Edit .env file with your actual API keys")
+    print("2. Set up your Supabase database using the SQL files")
+    print("3. Run: python run.py (for backend)")
+    print("4. Run: npm run dev (for frontend)")
+    print("5. Visit: http://localhost:5173 (frontend)")
+    print("6. Visit: http://localhost:8000/docs (backend API docs)")
+    
+    return True
+
+
+def create_production_ml_service():
+    """Create a production-ready ML service."""
+    ml_service_content = '''"""
 Production ML service for CarbonSight Dashboard API.
 Provides real ML analysis and optimization capabilities.
 """
@@ -391,3 +492,99 @@ class MLService:
             },
             "success": True
         }
+'''
+    
+    with open("ml_service.py", "w") as f:
+        f.write(ml_service_content)
+
+
+def create_env_file():
+    """Create a basic .env file."""
+    env_content = """# Supabase Configuration
+VITE_SUPABASE_URL=your_supabase_url_here
+VITE_SUPABASE_ANON_KEY=your_supabase_anon_key_here
+
+# Backend API Configuration
+VITE_API_BASE_URL=http://localhost:8000
+
+# Gemini API Configuration
+GEMINI_API_KEY=your_gemini_api_key_here
+
+# OpenAI API Configuration (optional)
+OPENAI_API_KEY=your_openai_api_key_here
+
+# Database Configuration
+SUPABASE_URL=your_supabase_url_here
+SUPABASE_KEY=your_supabase_key_here
+
+# Server Configuration
+DEBUG=True
+HOST=0.0.0.0
+PORT=8000
+"""
+    
+    with open(".env", "w") as f:
+        f.write(env_content)
+
+
+def create_startup_scripts():
+    """Create startup scripts for development and production."""
+    
+    # Development startup script
+    dev_script = """#!/bin/bash
+echo "🚀 Starting CarbonSight in development mode..."
+
+# Start backend in background
+echo "📡 Starting backend server..."
+python run.py &
+BACKEND_PID=$!
+
+# Wait a moment for backend to start
+sleep 3
+
+# Start frontend
+echo "🎨 Starting frontend development server..."
+npm run dev &
+FRONTEND_PID=$!
+
+echo "✅ CarbonSight is running!"
+echo "Frontend: http://localhost:5173"
+echo "Backend API: http://localhost:8000"
+echo "API Docs: http://localhost:8000/docs"
+echo ""
+echo "Press Ctrl+C to stop both servers"
+
+# Wait for user to stop
+wait
+
+# Cleanup
+kill $BACKEND_PID $FRONTEND_PID 2>/dev/null
+"""
+    
+    with open("start_dev.sh", "w") as f:
+        f.write(dev_script)
+    
+    os.chmod("start_dev.sh", 0o755)
+    
+    # Production startup script
+    prod_script = """#!/bin/bash
+echo "🚀 Starting CarbonSight in production mode..."
+
+# Build frontend
+echo "🏗️ Building frontend..."
+npm run build
+
+# Start backend
+echo "📡 Starting backend server..."
+python run.py
+"""
+    
+    with open("start_prod.sh", "w") as f:
+        f.write(prod_script)
+    
+    os.chmod("start_prod.sh", 0o755)
+
+
+if __name__ == "__main__":
+    success = main()
+    sys.exit(0 if success else 1)

@@ -25,19 +25,12 @@ class DatabaseService:
     def __init__(self):
         """Initialize database service with Supabase client."""
         if not config.is_database_configured:
-            print("⚠️  Database configuration incomplete - using mock mode")
-            self.client = None
-            return
+            raise ValueError("Database configuration is incomplete")
         
-        try:
-            self.client: Client = create_client(
-                config.supabase_url,
-                config.supabase_key
-            )
-            print("✅ Database service initialized successfully")
-        except Exception as e:
-            print(f"⚠️  Database connection failed: {e} - using mock mode")
-            self.client = None
+        self.client: Client = create_client(
+            config.supabase_url,
+            config.supabase_key
+        )
     
     async def get_team_stats(
         self, 
@@ -54,22 +47,6 @@ class DatabaseService:
         Returns:
             TeamStats object with real data or None if team not found
         """
-        if not self.client:
-            print("⚠️  Database not available - returning mock data")
-            return TeamStats(
-                team_id=team_id,
-                total_requests=100,
-                total_energy_kwh=5.2,
-                total_co2_grams=2.1,
-                total_cost_usd=0.15,
-                avg_latency_ms=250,
-                efficiency_score=85.5,
-                carbon_credits_earned=42.0,
-                requests_today=15,
-                energy_saved_today=0.8,
-                co2_saved_today=0.3
-            )
-            
         try:
             # Calculate date range
             end_date = datetime.utcnow()
@@ -289,10 +266,6 @@ class DatabaseService:
         Returns:
             True if successful, False otherwise
         """
-        if not self.client:
-            print("⚠️  Database not available - skipping log")
-            return True  # Return True to not break the flow
-            
         try:
             # Prepare data for insertion
             insert_data = {
