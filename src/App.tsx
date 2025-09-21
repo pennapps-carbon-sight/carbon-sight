@@ -17,6 +17,7 @@ import {
   Trash2,
   ChartLine,
   Award,
+  Info
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -1023,6 +1024,22 @@ function EcoWaveDeco() {
 }
 
 /* ---------------- Screen 2: Chat (modern, polished, hideable sidebar) ---------------- */
+type EstRow = { model: string; costUsdPer1k: number; co2Per1k: number; latencyMsP95: number };
+
+/** Static baseline rows to match your screenshot feel. */
+const GEMINI_BASELINES: EstRow[] = [
+  { model: "gemini-2.5-pro",       costUsdPer1k: 0.0076, co2Per1k: 0.6313, latencyMsP95: 721.43 },
+  { model: "gemini-2.5-flash",     costUsdPer1k: 0.0037, co2Per1k: 0.3285, latencyMsP95: 1013.89 },
+  { model: "gemini-2.5-flash-lite",costUsdPer1k: 0.0012, co2Per1k: 0.1225, latencyMsP95: 1225.00 },
+  { model: "gemini-1.5-pro",       costUsdPer1k: 0.0121, co2Per1k: 0.9075, latencyMsP95: 756.25 },
+  { model: "gemini-1.5-flash",     costUsdPer1k: 0.0051, co2Per1k: 0.4050, latencyMsP95: 1012.50 },
+  { model: "gemini-1.5-flash-lite",costUsdPer1k: 0.0023, co2Per1k: 0.1830, latencyMsP95: 1270.83 },
+];
+
+/** If you want to scale by prompt length, you can; for now we just return baselines. */
+function estimateForPrompt(_text: string): EstRow[] {
+  return GEMINI_BASELINES;
+}
 function ChatScreen() {
   const { user, logout } = useAuth();
 
@@ -1034,6 +1051,11 @@ function ChatScreen() {
   const [fx, setFx] = useState<{ show: boolean; color: "green" | "red" }>({ show: false, color: "green" });
   const playedColorsRef = useRef<Set<"green" | "red">>(new Set());
   const burstPlayedRef = useRef(false);
+
+  // Per-prompt analysis rows keyed by message index
+const [analyses, setAnalyses] = useState<Record<number, EstRow[]>>({});
+// Which message index is currently showing the info modal
+const [infoFor, setInfoFor] = useState<number | null>(null);
 
   useEffect(() => {
     burstPlayedRef.current = false;
@@ -1069,36 +1091,40 @@ function ChatScreen() {
 
   const BURST_MS = 3200;
   async function sendMessage() {
-    const text = input.trim();
-    if (!text) return;
-    setInput("");
-    setMessages((m) => [...m, { role: "user", content: text }]);
+  const text = input.trim();
+  if (!text) return;
 
-    // Perform Gemini analysis and store in Supabase
-    if (user?.email) {
-      console.log("[Chat] Performing Gemini analysis for prompt:", text);
-      try {
-        const analysisResults = await insertGeminiToSupabase(text, user.email);
-        console.log("[Chat] Gemini analysis completed:", analysisResults);
-      } catch (error) {
-        console.log("[Chat] Error performing Gemini analysis:", error);
-      }
-    } else {
-      console.log("[Chat] No user email available for analysis");
-    }
+  setInput("");
 
-    const effectColor: "green" | "red" = currentModel.energy === "intensive" ? "red" : "green";
-    if (!playedColorsRef.current.has(effectColor)) {
-      requestAnimationFrame(() => {
-        setFx({ show: true, color: effectColor });
-        window.setTimeout(() => setFx((p) => ({ ...p, show: false })), BURST_MS);
-      });
-      playedColorsRef.current.add(effectColor);
-    }
+  // Add user message and capture its index
+  setMessages((prev) => {
+    const myIndex = prev.length; // this user's message will be at this index
+    const next = [...prev, { role: "user", content: text }];
 
-    const reply = `(${currentModel.label}) I've analyzed your prompt for carbon emissions across different Gemini models. The data has been stored in our database. Here's a summary: Your prompt of ${text.length} characters will generate approximately ${Math.round(text.length / 4)} tokens, with varying CO₂ emissions depending on the model chosen.`;
-    setTimeout(() => setMessages((m) => [...m, { role: "assistant", content: reply }]), 350);
+    // compute analysis rows for this prompt (front-end demo)
+    const rows = estimateForPrompt(text);
+    setAnalyses((a) => ({ ...a, [myIndex]: rows }));
+
+    return next;
+  });
+
+  // (optional) your Supabase insert/analysis call can stay here if you have it
+  // try { await insertGeminiToSupabase(text, user?.email ?? ""); } catch {}
+
+  // Play the burst once per color
+  const effectColor: "green" | "red" = currentModel.energy === "intensive" ? "red" : "green";
+  if (!playedColorsRef.current.has(effectColor)) {
+    requestAnimationFrame(() => {
+      setFx({ show: true, color: effectColor });
+      window.setTimeout(() => setFx((p) => ({ ...p, show: false })), BURST_MS);
+    });
+    playedColorsRef.current.add(effectColor);
   }
+
+  // Demo assistant reply
+  const reply = `(${currentModel.label}) I've analyzed your prompt for carbon emissions across different Gemini models. The data is shown via the ⓘ button next to your message.`;
+  setTimeout(() => setMessages((m) => [...m, { role: "assistant", content: reply }]), 350);
+}
 
   /* -------- Sidebar state: desktop collapse + mobile overlay -------- */
   const [collapsed, setCollapsed] = useState<boolean>(() => localStorage.getItem("cs.sidebarCollapsed") === "1");
@@ -1376,6 +1402,7 @@ useEffect(() => {
 
       {/* Chat pane */}
       <section className="relative isolate flex min-w-0 flex-1 flex-col">
+        
         {/* Wave FX (behind content) */}
         <WaterBurstFX show={fx.show} color={fx.color} />
 
@@ -1422,27 +1449,48 @@ useEffect(() => {
           <div className="text-[11px] text-slate-400">
             {user?.email ? <>Signed in as <span className="text-slate-300">{user.email}</span></> : "guest"}
           </div>
+        
         </header>
 
-        {/* Messages */}
-        <div ref={listRef} className="relative z-20 flex-1 space-y-4 overflow-y-auto px-4 py-6">
-          {messages.map((m, i) => {
-            const mine = m.role === "user";
-            return (
-              <div key={i} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
-                <div
-                  className={`max-w-[72ch] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm shadow-[0_0_0_1px_rgba(255,255,255,0.05)] ${
-                    mine
-                      ? "bg-gradient-to-br from-emerald-500 to-emerald-400 text-black"
-                      : "bg-white/5 text-slate-100"
-                  }`}
-                >
-                  {m.content}
-                </div>
-              </div>
-            );
-          })}
+         {/* Messages */}
+<div ref={listRef} className="relative z-20 flex-1 space-y-4 overflow-y-auto px-4 py-6">
+  {messages.map((m, i) => {
+    const mine = m.role === "user";
+    return (
+      <div key={i} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+        <div
+          className={`relative max-w-[72ch] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm shadow-[0_0_0_1px_rgba(255,255,255,0.05)] ${
+            mine
+              ? "bg-gradient-to-br from-emerald-500 to-emerald-400 text-black"
+              : "bg-white/5 text-slate-100"
+          }`}
+        >
+          {m.content}
+
+          {/* ⓘ button only for user prompts */}
+          {mine && (
+            <button
+              onClick={() => setInfoFor(i)}
+              className="absolute -right-2 -top-2 grid h-6 w-6 place-items-center rounded-full border border-white/20 bg-black/30 text-white/80 backdrop-blur hover:bg-black/50"
+              title="Show model metrics"
+            >
+              <Info className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
+      </div>
+    );
+  })}
+</div>
+
+{/* Prompt info modal */}
+{infoFor !== null && (
+  <PromptInfoModal
+    prompt={messages[infoFor]?.content ?? ""}
+    rows={analyses[infoFor] ?? []}
+    onClose={() => setInfoFor(null)}
+  />
+)}
 
         {/* Composer */}
         <footer className="relative z-20 border-t border-white/10 p-3">
@@ -1476,6 +1524,7 @@ useEffect(() => {
             </p>
           </div>
         </footer>
+        
       </section>
     </div>
   );
@@ -1495,6 +1544,79 @@ function Card({
         {icon} {title}
       </div>
       <div className="text-2xl font-semibold">{children}</div>
+    </div>
+  );
+}
+function PromptInfoModal({
+  prompt,
+  rows,
+  onClose,
+}: {
+  prompt: string;
+  rows: EstRow[];
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onClick={onClose}>
+      <div
+        className="w-full max-w-3xl overflow-hidden rounded-2xl border border-white/10 bg-[#0b1115] shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+          <div className="flex items-center gap-2">
+            <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-400/20">
+              i
+            </span>
+            <div>
+              <div className="text-sm font-medium text-slate-200">Prompt analysis</div>
+              <div className="max-w-[60ch] truncate text-xs text-slate-400">“{prompt}”</div>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-lg px-2 py-1 text-slate-400 hover:text-white"
+            aria-label="Close"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Table */}
+        <div className="max-h-[70vh] overflow-auto p-4">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="text-slate-400">
+                <th className="px-3 py-2">Model</th>
+                <th className="px-3 py-2">Cost ($/1k tok)</th>
+                <th className="px-3 py-2">CO₂ (kg/1k tok)</th>
+                <th className="px-3 py-2">Latency (ms p95)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 && (
+                <tr>
+                  <td className="px-3 py-4 text-slate-400" colSpan={4}>
+                    No data for this prompt.
+                  </td>
+                </tr>
+              )}
+              {rows.map((r) => (
+                <tr key={r.model} className="odd:bg-white/0 even:bg-white/5">
+                  <td className="px-3 py-2 font-medium text-slate-100">{r.model}</td>
+                  <td className="px-3 py-2">${r.costUsdPer1k.toFixed(4)}</td>
+                  <td className="px-3 py-2">{r.co2Per1k.toFixed(4)}</td>
+                  <td className="px-3 py-2">{r.latencyMsP95.toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <p className="mt-3 text-[11px] text-slate-500">
+            Numbers shown are baseline estimates per 1k tokens. Wire this to your Supabase analysis for live values.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
