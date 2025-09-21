@@ -587,6 +587,66 @@ async def estimate_cost(
         return {"error": str(e), "success": False}
 
 
+# Model Comparison Endpoints
+@app.post("/api/v1/models/test-all")
+async def test_all_gemini_models(
+    message: str,
+    user_id: str = "anonymous",
+    team_id: str = "team-engineering",
+    gemini: GeminiService = Depends(lambda: gemini_service),
+    db: DatabaseService = Depends(get_database_service)
+):
+    """
+    Test a prompt against all 6 Gemini models and store results.
+    
+    This endpoint:
+    1. Tests the prompt against all 6 Gemini models
+    2. Stores all results in Supabase
+    3. Returns comparison and best model recommendation
+    """
+    try:
+        # Test all models
+        comparison_result = await gemini.test_all_models(message)
+        
+        # Store all successful results in database
+        stored_models = []
+        for model_name, result in comparison_result["results"].items():
+            if result.get("success", False):
+                # Store each model result
+                await db.log_ai_request({
+                    "prompt": message,
+                    "response": result["response_text"],
+                    "model_used": model_name,
+                    "user_id": user_id,
+                    "team_id": team_id,
+                    "latency_ms": result.get("processing_time_ms", 0),
+                    "cost_usd": 0.0,  # Gemini doesn't provide cost
+                    "input_tokens": result.get("tokens_used", {}).get("input", 0),
+                    "output_tokens": result.get("tokens_used", {}).get("output", 0),
+                    "total_tokens": result.get("tokens_used", {}).get("total", 0),
+                    "efficiency_score": 0.0,  # Will be calculated by metrics service
+                    "is_model_comparison": True  # Flag for comparison requests
+                })
+                stored_models.append(model_name)
+        
+        return {
+            "prompt": message,
+            "best_model": comparison_result["best_model"],
+            "recommendation": comparison_result["recommendation"],
+            "total_models_tested": comparison_result["total_models_tested"],
+            "successful_models": comparison_result["successful_models"],
+            "stored_models": stored_models,
+            "model_comparison": comparison_result["model_comparison"],
+            "success": True
+        }
+        
+    except Exception as e:
+        return {
+            "error": str(e),
+            "success": False
+        }
+
+
 # Admin Dashboard Endpoints
 @app.get("/api/v1/admin/test")
 async def admin_test():

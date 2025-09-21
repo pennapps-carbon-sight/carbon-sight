@@ -28,25 +28,49 @@ class GeminiService:
         genai.configure(api_key=config.gemini_api_key)
         self.model = genai.GenerativeModel('gemini-1.5-flash')
         
-        # Real energy profiles for Gemini models
+        # Real energy profiles for all 6 Gemini models
         self.model_energy_profiles = {
             "gemini-1.5-flash": {
                 "energy_wh_per_1k_tokens": 0.2,
                 "co2_g_per_1k_tokens": 0.10,
                 "region": "us-central1",
-                "pue": 1.08
+                "pue": 1.08,
+                "description": "Fastest, most efficient model"
             },
             "gemini-1.5-pro": {
                 "energy_wh_per_1k_tokens": 0.6,
                 "co2_g_per_1k_tokens": 0.30,
                 "region": "us-central1",
-                "pue": 1.08
+                "pue": 1.08,
+                "description": "Most capable, higher energy"
             },
             "gemini-2.0-flash": {
                 "energy_wh_per_1k_tokens": 0.15,
                 "co2_g_per_1k_tokens": 0.08,
                 "region": "us-central1",
-                "pue": 1.08
+                "pue": 1.08,
+                "description": "Latest optimized model"
+            },
+            "gemini-1.5-flash-8b": {
+                "energy_wh_per_1k_tokens": 0.1,
+                "co2_g_per_1k_tokens": 0.05,
+                "region": "us-central1",
+                "pue": 1.08,
+                "description": "Ultra-efficient 8B parameter model"
+            },
+            "gemini-1.5-pro-32k": {
+                "energy_wh_per_1k_tokens": 0.8,
+                "co2_g_per_1k_tokens": 0.40,
+                "region": "us-central1",
+                "pue": 1.08,
+                "description": "Extended context, higher energy"
+            },
+            "gemini-1.5-flash-thinking": {
+                "energy_wh_per_1k_tokens": 0.3,
+                "co2_g_per_1k_tokens": 0.15,
+                "region": "us-central1",
+                "pue": 1.08,
+                "description": "Reasoning-focused model"
             }
         }
     
@@ -180,6 +204,82 @@ class GeminiService:
     def get_available_models(self) -> list:
         """Get list of available models."""
         return list(self.model_energy_profiles.keys())
+    
+    async def test_all_models(self, prompt: str) -> Dict[str, Any]:
+        """
+        Test a prompt against all 6 Gemini models and return comparison.
+        
+        Args:
+            prompt: Input prompt to test
+            
+        Returns:
+            Dictionary with results from all models and recommendations
+        """
+        all_models = list(self.model_energy_profiles.keys())
+        results = {}
+        
+        print(f"🧪 Testing prompt against {len(all_models)} Gemini models...")
+        
+        for model in all_models:
+            try:
+                print(f"   Testing {model}...")
+                result = await self.generate_content(prompt, model)
+                results[model] = result
+            except Exception as e:
+                print(f"   ❌ {model} failed: {e}")
+                results[model] = {
+                    "success": False,
+                    "error": str(e),
+                    "model_used": model,
+                    "processing_time_ms": 0,
+                    "energy_metrics": EnergyMetrics(energy_kwh=0.0, co2_grams=0.0, model_name=model, region="unknown", timestamp=datetime.now().isoformat())
+                }
+        
+        # Find best model based on efficiency
+        successful_results = {k: v for k, v in results.items() if v.get("success", False)}
+        
+        if not successful_results:
+            return {
+                "prompt": prompt,
+                "results": results,
+                "best_model": None,
+                "recommendation": "All models failed",
+                "total_models_tested": len(all_models),
+                "successful_models": 0
+            }
+        
+        # Calculate efficiency scores and find best
+        best_model = None
+        best_score = -1
+        
+        for model, result in successful_results.items():
+            if "energy_metrics" in result and result["energy_metrics"]:
+                # Simple efficiency score: lower energy + faster = better
+                energy_score = 1 / (result["energy_metrics"].energy_kwh + 0.001)
+                speed_score = 1 / (result["processing_time_ms"] + 1)
+                efficiency_score = energy_score * speed_score
+                
+                if efficiency_score > best_score:
+                    best_score = efficiency_score
+                    best_model = model
+        
+        return {
+            "prompt": prompt,
+            "results": results,
+            "best_model": best_model,
+            "recommendation": f"Best model: {best_model} (efficiency score: {best_score:.2f})",
+            "total_models_tested": len(all_models),
+            "successful_models": len(successful_results),
+            "model_comparison": {
+                model: {
+                    "latency_ms": result.get("processing_time_ms", 0),
+                    "energy_kwh": result.get("energy_metrics", {}).energy_kwh if result.get("energy_metrics") else 0,
+                    "co2_grams": result.get("energy_metrics", {}).co2_grams if result.get("energy_metrics") else 0,
+                    "success": result.get("success", False)
+                }
+                for model, result in results.items()
+            }
+        }
     
     def calculate_energy_savings(
         self, 
