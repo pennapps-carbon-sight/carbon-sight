@@ -55,7 +55,6 @@ export default function App() {
   );
 }
 
-/* -------- Error Boundary (so we never get a blank screen) -------- */
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: any }> {
   constructor(props: any) { super(props); this.state = { error: null }; }
   static getDerivedStateFromError(error: any) { return { error }; }
@@ -77,15 +76,10 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { err
   }
 }
 
-/* ---------------- Supabase (guarded) ---------------- */
+
 const SUPA_URL = (import.meta as any).env?.VITE_SUPABASE_URL as string | undefined;
 const SUPA_ANON = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY as string | undefined;
 const MISSING_ENV = !SUPA_URL || !SUPA_ANON;
-
-// console.log("[App] VITE_SUPABASE_URL present:", Boolean(SUPA_URL));
-// console.log("[App] VITE_SUPABASE_ANON_KEY present:", Boolean(SUPA_ANON));
-// console.log("[App] SUPA_URL:", SUPA_URL);
-// console.log("[App] SUPA_ANON:", SUPA_ANON?.substring(0, 20) + "...");
 
 const supabase = !MISSING_ENV
   ? createClient(SUPA_URL!, SUPA_ANON!, { auth: { persistSession: true, autoRefreshToken: true } })
@@ -342,12 +336,10 @@ async function insertGeminiToSupabase(promptText: string, userEmail: string) {
     console.log("[Gemini] Exception fetching user info:", err);
   }
   
-  // Now insert metrics into CarbonSight table with user info
   const recordsWithUserInfo = results.map(result => ({
     ...result,
     user_email: userEmail,
     team: userTeam
-    // Removed prompt_text since it doesn't exist in your table
   }));
   
   console.log("[Gemini] Prepared records for insertion:", {
@@ -358,7 +350,6 @@ async function insertGeminiToSupabase(promptText: string, userEmail: string) {
   });
   
   try {
-    // First, let's check what columns exist in the CarbonSight table
     const { data: tableCheck, error: tableError } = await supabase
       .from('CarbonSight')
       .select('*')
@@ -385,7 +376,6 @@ async function insertGeminiToSupabase(promptText: string, userEmail: string) {
       
       console.log("[Gemini] Attempted to insert records:", recordsWithUserInfo);
       
-      // Try with just team field to see if that's the issue
       console.log("[Gemini] Trying with team field only");
       const teamOnlyRecords = results.map(result => ({
         model_name: result.model_name,
@@ -404,7 +394,6 @@ async function insertGeminiToSupabase(promptText: string, userEmail: string) {
       if (teamError) {
         console.log("[Gemini] Team field also failed:", teamError);
         
-        // Final fallback without team field
         console.log("[Gemini] Final fallback without team field");
         const fallbackRecords = results.map(result => ({
           model_name: result.model_name,
@@ -465,11 +454,11 @@ const WEB_MODELS: { id: string; label: string; energy: "sustainable" | "balanced
   { id: "qwen-14b",      label: "Qwen 14B", energy: "balanced" },
 ];
 
-/* ---------------- Screen 1: Homepage + Login ---------------- */
+
 function HomePage() {
   const [open, setOpen] = useState(false);
 
-  // Optional: allow other components to trigger opening the modal
+
   useEffect(() => {
     const handler = () => setOpen(true);
     window.addEventListener("open-login", handler);
@@ -479,9 +468,8 @@ function HomePage() {
   return (
     <div className="relative min-h-screen bg-[#0b1115] text-slate-100 overflow-hidden">
       <BackdropGlow />
-      <EcoWaveDeco />  {/* subtle animated background */}
+      <EcoWaveDeco />
 
-      {/* Top nav */}
       <header className="relative z-20 mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
         <div className="flex items-center">
           <CarbonSightLogo energy="sustainable" width={200} height={36} className="block" />
