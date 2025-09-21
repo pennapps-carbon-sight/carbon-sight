@@ -1679,9 +1679,7 @@ function PromptInfoModal({
           </table>
         </div>
 
-        <p className="mt-3 text-[11px] text-slate-500">
-          Live client estimates. If your backend streams measurements into <code>prompt_metrics</code>, they’ll override rows in real time.
-        </p>
+        
       </div>
     </div>
   );
