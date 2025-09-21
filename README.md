@@ -167,7 +167,6 @@ Example: Saving 50g CO₂ → 5 $GREEN tokens
 - **React.js** – Frontend chatbot and dashboard  
 - **Google ADK** – Agentic framework for model routing, embeddings, and thinking budget allocation  
 - **Google Gemini API** – Generative AI and embeddings  
-- **FastAPI (via ADK)** – API serving layer  
-- **SQLite (or lightweight DB)** – Logging and stats storage  
-- **Scikit-learn / Statsmodels** – Statistical inference and forecasting  
+- **FastAPI (via ADK)** – API serving layer
+- **Supabase**
 - **Polygon (Testnet)** – Blockchain, NFT, and $GREEN token incentives  
