@@ -12,6 +12,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { Session, User } from "@supabase/supabase-js";
 import { Menu, ChevronLeft, ChevronRight, X } from "lucide-react";
 import NeuralEnergyWeb from "./NeuralEnergyWeb";
+import ReactMarkdown from "react-markdown";
 
 import {
   LogIn,
@@ -41,6 +42,23 @@ import { fetchTeamAverages } from "./api/metrics";
 import WaterBurstFX from "./WaterBurst";
 import "./water-burst.css";
 
+export default function App() {
+  if (MISSING_ENV) return <MissingEnv />;
+  return (
+    <ErrorBoundary>
+      <BrowserRouter>
+        <AuthProvider>
+          <Routes>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/chat" element={<Protected><ChatScreen /></Protected>} />
+            <Route path="/dashboard" element={<Protected><DashboardScreen /></Protected>} />
+          </Routes>
+        </AuthProvider>
+      </BrowserRouter>
+    </ErrorBoundary>
+  );
+}
+
 /* -------- Error Boundary (so we never get a blank screen) -------- */
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: any }> {
   constructor(props: any) { super(props); this.state = { error: null }; }
@@ -68,10 +86,10 @@ const SUPA_URL = (import.meta as any).env?.VITE_SUPABASE_URL as string | undefin
 const SUPA_ANON = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY as string | undefined;
 const MISSING_ENV = !SUPA_URL || !SUPA_ANON;
 
-console.log("[App] VITE_SUPABASE_URL present:", Boolean(SUPA_URL));
-console.log("[App] VITE_SUPABASE_ANON_KEY present:", Boolean(SUPA_ANON));
-console.log("[App] SUPA_URL:", SUPA_URL);
-console.log("[App] SUPA_ANON:", SUPA_ANON?.substring(0, 20) + "...");
+// console.log("[App] VITE_SUPABASE_URL present:", Boolean(SUPA_URL));
+// console.log("[App] VITE_SUPABASE_ANON_KEY present:", Boolean(SUPA_ANON));
+// console.log("[App] SUPA_URL:", SUPA_URL);
+// console.log("[App] SUPA_ANON:", SUPA_ANON?.substring(0, 20) + "...");
 
 const supabase = !MISSING_ENV
   ? createClient(SUPA_URL!, SUPA_ANON!, { auth: { persistSession: true, autoRefreshToken: true } })
@@ -1089,7 +1107,7 @@ const GEMINI_BASELINES: BaselineRow[] = [
   { model: "gemini-1.5-flash-lite",costUsdPer1k: 0.0023, co2Per1k: 0.1830, latencyMsP95: 1270.83 },
 ];
 
-/** If you want to scale by prompt length, you can; for now we just return baselines. */
+
 function estimateForPrompt(_text: string): EstRow[] {
   return GEMINI_BASELINES;
 }
@@ -1174,9 +1192,25 @@ const [infoFor, setInfoFor] = useState<number | null>(null);
     playedColorsRef.current.add(effectColor);
   }
 
-  // Demo assistant reply
-  const reply = `(${currentModel.label}) I've analyzed your prompt for carbon emissions across different Gemini models. The data is shown via the ⓘ button next to your message.`;
-  setTimeout(() => setMessages((m) => [...m, { role: "assistant", content: reply }]), 350);
+  try {
+    // Call your backend
+    const res = await fetch("http://localhost:4000/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: text }), // match your backend
+    });
+  
+    const data = await res.json();
+    const reply = data.reply; // backend returns { reply: "..." }
+  
+    setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+  } catch (err) {
+    console.error(err);
+    setMessages((prev) => [
+      ...prev,
+      { role: "assistant", content: "Failed to get response from Gemini API." },
+    ]);
+  }
 }
 
   /* -------- Sidebar state: desktop collapse + mobile overlay -------- */
@@ -1512,13 +1546,41 @@ useEffect(() => {
     return (
       <div key={i} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
         <div
-          className={`relative max-w-[72ch] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm shadow-[0_0_0_1px_rgba(255,255,255,0.05)] ${
+          className={`relative max-w-[72ch] rounded-2xl px-4 py-3 text-sm shadow-[0_0_0_1px_rgba(255,255,255,0.05)] ${
             mine
               ? "bg-gradient-to-br from-emerald-500 to-emerald-400 text-black"
               : "bg-white/5 text-slate-100"
           }`}
         >
-          {m.content}
+          <ReactMarkdown
+            components={{
+              code({ node, inline, className, children, ...props }) {
+                return inline ? (
+                  <code className={className} {...props}>
+                    {children}
+                  </code>
+                ) : (
+                  <pre
+                    {...props}
+                    style={{
+                      background: "#272822",
+                      color: "#f8f8f2",
+                      padding: 8,
+                      borderRadius: 6,
+                      overflowX: "auto",
+                    }}
+                  >
+                    <code>{children}</code>
+                  </pre>
+                );
+              },
+              p({ node, children }) {
+                return <p style={{ margin: "4px 0", whiteSpace: "pre-wrap" }}>{children}</p>;
+              },
+            }}
+          >
+            {m.content}
+          </ReactMarkdown>
 
           {/* ⓘ button only for user prompts */}
           {mine && (
@@ -1905,19 +1967,4 @@ function Protected({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-export default function App() {
-  if (MISSING_ENV) return <MissingEnv />;
-  return (
-    <ErrorBoundary>
-      <BrowserRouter>
-        <AuthProvider>
-          <Routes>
-            <Route path="/" element={<HomePage />} />
-            <Route path="/chat" element={<Protected><ChatScreen /></Protected>} />
-            <Route path="/dashboard" element={<Protected><DashboardScreen /></Protected>} />
-          </Routes>
-        </AuthProvider>
-      </BrowserRouter>
-    </ErrorBoundary>
-  );
-}
+export { ChatScreen };
