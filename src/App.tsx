@@ -10,7 +10,6 @@ import {
   LogOut,
   MessageSquare,
   Plus,
-  Settings,
   BarChart3,
   Leaf,
   Zap,
@@ -18,8 +17,6 @@ import {
   Trash2,
   ChartLine,
   Award,
-  Eye,
-  EyeOff,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -62,6 +59,8 @@ const MISSING_ENV = !SUPA_URL || !SUPA_ANON;
 
 console.log("[App] VITE_SUPABASE_URL present:", Boolean(SUPA_URL));
 console.log("[App] VITE_SUPABASE_ANON_KEY present:", Boolean(SUPA_ANON));
+console.log("[App] SUPA_URL:", SUPA_URL);
+console.log("[App] SUPA_ANON:", SUPA_ANON?.substring(0, 20) + "...");
 
 const supabase = !MISSING_ENV
   ? createClient(SUPA_URL!, SUPA_ANON!, { auth: { persistSession: true, autoRefreshToken: true } })
@@ -71,7 +70,8 @@ const supabase = !MISSING_ENV
 interface AuthCtx {
   session: Session | null;
   user: User | null;
-  login: (email: string, password: string) => Promise<void>;
+  sendOTP: (email: string) => Promise<void>;
+  verifyOTP: (email: string, token: string) => Promise<{ isNewUser: boolean }>;
   logout: () => Promise<void>;
 }
 const Auth = createContext<AuthCtx | null>(null);
@@ -90,19 +90,105 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => sub.data.subscription.unsubscribe();
   }, []);
 
-  async function login(email: string, password: string) {
+  async function sendOTP(email: string) {
     if (!supabase) throw new Error("Supabase env vars are missing. Add .env and restart the dev server.");
-    const res = await supabase.auth.signInWithPassword({ email, password });
-    if (res.error) {
-      const signUp = await supabase.auth.signUp({ email, password });
-      if (signUp.error && !String(signUp.error.message).includes("already registered")) throw signUp.error;
-      const res2 = await supabase.auth.signInWithPassword({ email, password });
-      if (res2.error) throw res2.error;
+    console.log("[Auth] Sending OTP to:", email);
+    
+    const { data, error } = await supabase.auth.signInWithOtp({
+      email: email,
+      options: {
+        shouldCreateUser: true,
+        emailRedirectTo: undefined, // Disable magic link redirect
+      }
+    });
+    
+    if (error) {
+      console.log("[Auth] OTP send error:", error);
+      throw error;
+    }
+    
+    console.log("[Auth] OTP sent successfully:", data);
+  }
+
+  async function verifyOTP(email: string, token: string) {
+    if (!supabase) throw new Error("Supabase env vars are missing. Add .env and restart the dev server.");
+    console.log("[Auth] Verifying OTP for:", email);
+    
+    const { data, error } = await supabase.auth.verifyOtp({
+      email: email,
+      token: token,
+      type: 'email'
+    });
+    
+    if (error) {
+      console.log("[Auth] OTP verification error:", error);
+      throw error;
+    }
+    
+    console.log("[Auth] OTP verified successfully:", data);
+    
+    // Check if this is a new user by comparing created_at and updated_at
+    const isNewUser = data.user && data.user.created_at === data.user.updated_at;
+    console.log("[Auth] Is new user:", isNewUser);
+    
+    if (isNewUser) {
+      // For new users, we'll store their info after team selection
+      return { isNewUser: true };
+    } else {
+      // For existing users, store their info immediately
+      await storeUserEmail(email);
+      return { isNewUser: false };
+    }
+  }
+
+  async function storeUserEmail(email: string, team?: string) {
+    if (!supabase) return;
+    
+    try {
+      // Store user registration with team information
+      const { data, error } = await supabase
+        .from('CarbonSight')
+        .insert([{ 
+          model_name: 'user_registration',
+          latency: 0,
+          cost: 0,
+          gco2_emissions: 0,
+          created_at: new Date().toISOString(),
+          prompt_text: `User registered: ${email}${team ? ` (Team: ${team})` : ''}`,
+          user_email_text: email,
+          team: team || 'Not specified'
+        }]);
+      
+      if (error) {
+        console.log("[Auth] Error storing user data:", error);
+        // Try without team field if that fails
+        const { data: data2, error: error2 } = await supabase
+          .from('CarbonSight')
+          .insert([{ 
+            model_name: 'user_registration',
+            latency: 0,
+            cost: 0,
+            gco2_emissions: 0,
+            created_at: new Date().toISOString(),
+            prompt_text: `User registered: ${email}${team ? ` (Team: ${team})` : ''}`,
+            user_email_text: email
+          }]);
+        
+        if (error2) {
+          console.log("[Auth] Error storing user data without team:", error2);
+        } else {
+          console.log("[Auth] User data stored successfully without team:", data2);
+        }
+      } else {
+        console.log("[Auth] User data stored successfully:", data);
+      }
+    } catch (err) {
+      console.log("[Auth] Exception storing user data:", err);
     }
   }
   async function logout() { if (supabase) await supabase.auth.signOut(); }
 
-  const value = useMemo(() => ({ session, user: session?.user ?? null, login, logout }), [session]);
+  const value = useMemo(() => ({ session, user: session?.user ?? null, sendOTP, verifyOTP, logout }), [session]);
   return <Auth.Provider value={value}>{children}</Auth.Provider>;
 }
 
@@ -147,6 +233,87 @@ function MissingEnv() {
       </div>
     </div>
   );
+}
+
+/* === Gemini Analysis (from Python script) === */
+const GEMINI_MODELS = {
+  "gemini-2.5-pro": {"co2_per_token": 0.0025, "latency_ms": 350, "cost_per_1k_tokens": 0.03, "completion_tokens": 250},
+  "gemini-2.5-flash": {"co2_per_token": 0.0018, "latency_ms": 180, "cost_per_1k_tokens": 0.02, "completion_tokens": 180},
+  "gemini-2.5-flash-lite": {"co2_per_token": 0.0010, "latency_ms": 100, "cost_per_1k_tokens": 0.01, "completion_tokens": 120},
+  "gemini-1.5-pro": {"co2_per_token": 0.0030, "latency_ms": 400, "cost_per_1k_tokens": 0.04, "completion_tokens": 300},
+  "gemini-1.5-flash": {"co2_per_token": 0.0020, "latency_ms": 200, "cost_per_1k_tokens": 0.025, "completion_tokens": 200},
+  "gemini-1.5-flash-lite": {"co2_per_token": 0.0012, "latency_ms": 120, "cost_per_1k_tokens": 0.015, "completion_tokens": 150}
+};
+
+function estimateGemini(promptText: string) {
+  const charCount = promptText.length;
+  const tokenCount = charCount / 4;
+
+  const results = [];
+  for (const [modelName, specs] of Object.entries(GEMINI_MODELS)) {
+    const totalTokens = tokenCount + specs.completion_tokens;
+    const co2 = totalTokens * specs.co2_per_token;
+    const cost = totalTokens / 1000 * specs.cost_per_1k_tokens;
+    const latencyMs = specs.latency_ms;
+    const tokensPerSec = totalTokens / (latencyMs / 1000);
+
+    results.push({
+      model_name: modelName,
+      latency: Math.round(tokensPerSec * 100) / 100,
+      cost: Math.round(cost * 10000) / 10000,
+      gco2_emissions: Math.round(co2 * 10000) / 10000,
+      created_at: new Date().toISOString()
+    });
+  }
+
+  return results;
+}
+
+async function insertGeminiToSupabase(promptText: string, userEmail: string) {
+  if (!supabase) return;
+  
+  const results = estimateGemini(promptText);
+  
+  // First, let's check what columns exist in the table
+  try {
+    const { data: tableData, error: tableError } = await supabase
+      .from('CarbonSight')
+      .select('*')
+      .limit(1);
+    
+    console.log("[Gemini] Table structure check:", { tableData, tableError });
+    console.log("[Gemini] Available columns:", tableData?.[0] ? Object.keys(tableData[0]) : "No data");
+  } catch (err) {
+    console.log("[Gemini] Error checking table structure:", err);
+  }
+  
+  // Try inserting with user_email as text
+  const recordsWithEmail = results.map(result => ({
+    ...result,
+    user_email: userEmail
+  }));
+  
+  try {
+    const { data, error } = await supabase
+      .from('CarbonSight')
+      .insert(recordsWithEmail);
+    
+    if (error) {
+      console.log("[Gemini] Error inserting data:", error);
+      console.log("[Gemini] Error details:", {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint
+      });
+    } else {
+      console.log("[Gemini] Data inserted successfully:", data);
+    }
+  } catch (err) {
+    console.log("[Gemini] Exception inserting data:", err);
+  }
+  
+  return results;
 }
 
 /* === Model list (used in Chat) === */
@@ -383,26 +550,83 @@ function HomePage() {
   );
 }
 
-/* ---------------- Login Modal (beautiful) ---------------- */
+/* ---------------- OTP Login Modal (beautiful) ---------------- */
 function LoginModal({ onClose }: { onClose: () => void }) {
-  const { login } = useAuth();
+  const { sendOTP, verifyOTP } = useAuth();
   const nav = useNavigate();
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [showPwd, setShowPwd] = useState(false);
+  const [otp, setOtp] = useState("");
+  const [team, setTeam] = useState("");
+  const [step, setStep] = useState<'email' | 'otp' | 'team'>('email');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function onSubmit(e: React.FormEvent) {
+  const teams = ['ML', 'Engineering', 'Finance', 'Research', 'HR'];
+
+  async function handleSendOTP(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError(null);
     try {
-      await login(email, password);
+      await sendOTP(email);
+      setStep('otp');
+    } catch (err: any) {
+      setError(err?.message || "Failed to send OTP");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleVerifyOTP(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await verifyOTP(email, otp);
+      if (result.isNewUser) {
+        setStep('team');
+      } else {
+        // Existing user, go directly to chat
+        onClose();
+        nav("/chat");
+      }
+    } catch (err: any) {
+      setError(err?.message || "Invalid OTP");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleTeamSelection(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      // Store user with team information
+      if (supabase) {
+        const { data, error } = await supabase
+          .from('CarbonSight')
+          .insert([{ 
+            model_name: 'user_registration',
+            latency: 0,
+            cost: 0,
+            gco2_emissions: 0,
+            created_at: new Date().toISOString(),
+            prompt_text: `User registered: ${email} (Team: ${team})`,
+            user_email_text: email,
+            team: team
+          }]);
+        
+        if (error) {
+          console.log("[Auth] Error storing user data:", error);
+        } else {
+          console.log("[Auth] User data stored successfully:", data);
+        }
+      }
       onClose();
       nav("/chat");
     } catch (err: any) {
-      setError(err?.message || "Login failed");
+      setError(err?.message || "Failed to complete registration");
     } finally {
       setLoading(false);
     }
@@ -437,75 +661,141 @@ function LoginModal({ onClose }: { onClose: () => void }) {
         </div>
 
         {/* Form */}
-        <form onSubmit={onSubmit} className="space-y-4 px-6 py-6 sm:px-8">
-          <div>
-            <label htmlFor="email" className="mb-1 block text-xs text-slate-400">
-              Email
-            </label>
-            <input
-              id="email"
-              type="email"
-              autoComplete="email"
-              placeholder="you@example.com"
-              className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-500 focus:border-emerald-400/40"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              disabled={loading}
-            />
-          </div>
+        <div className="space-y-4 px-6 py-6 sm:px-8">
+          {/* Step 1: Email */}
+          {step === 'email' && (
+            <form onSubmit={handleSendOTP} className="space-y-4">
+              <div>
+                <label htmlFor="email" className="mb-1 block text-xs text-slate-400">
+                  Email Address
+                </label>
+                <input
+                  id="email"
+                  type="email"
+                  autoComplete="email"
+                  placeholder="you@example.com"
+                  className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-500 focus:border-emerald-400/40"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  disabled={loading}
+                />
+              </div>
 
-          <div>
-            <label htmlFor="password" className="mb-1 block text-xs text-slate-400">
-              Password
-            </label>
-            <div className="relative">
-              <input
-                id="password"
-                type={showPwd ? "text" : "password"}
-                autoComplete="current-password"
-                placeholder="••••••••"
-                className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 pr-10 text-sm text-white outline-none placeholder:text-slate-500 focus:border-emerald-400/40"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                disabled={loading}
-              />
+              {error && (
+                <p className="rounded-lg border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+                  {error}
+                </p>
+              )}
+
               <button
-                type="button"
-                onClick={() => setShowPwd((s) => !s)}
-                className="absolute inset-y-0 right-0 grid w-10 place-items-center text-slate-400 hover:text-slate-200"
-                aria-label={showPwd ? "Hide password" : "Show password"}
-                tabIndex={-1}
+                type="submit"
+                disabled={loading}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-black hover:bg-emerald-400 disabled:opacity-70"
               >
-                {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                <Send className="h-4 w-4" />
+                {loading ? "Sending OTP..." : "Send OTP"}
               </button>
-            </div>
-            <div className="mt-1 text-right text-[11px] text-slate-500">
-              Forgot password? <span className="cursor-not-allowed underline opacity-60">Coming soon</span>
-            </div>
-          </div>
-
-          {error && (
-            <p className="rounded-lg border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
-              {error}
-            </p>
+            </form>
           )}
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-black hover:bg-emerald-400 disabled:opacity-70"
-          >
-            <LogIn className="h-4 w-4" />
-            {loading ? "Signing in…" : "Sign in / Create account"}
-          </button>
+          {/* Step 2: OTP Verification */}
+          {step === 'otp' && (
+            <form onSubmit={handleVerifyOTP} className="space-y-4">
+              <div>
+                <label htmlFor="otp" className="mb-1 block text-xs text-slate-400">
+                  Enter OTP
+                </label>
+                <input
+                  id="otp"
+                  type="text"
+                  placeholder="123456"
+                  className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-500 focus:border-emerald-400/40 text-center text-lg tracking-widest"
+                  value={otp}
+                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  required
+                  disabled={loading}
+                  maxLength={6}
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  We sent a 6-digit code to <span className="text-slate-300">{email}</span>
+                </p>
+              </div>
+
+              {error && (
+                <p className="rounded-lg border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+                  {error}
+                </p>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading || otp.length !== 6}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-black hover:bg-emerald-400 disabled:opacity-70"
+              >
+                <LogIn className="h-4 w-4" />
+                {loading ? "Verifying..." : "Verify OTP"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setStep('email')}
+                className="w-full text-xs text-slate-400 hover:text-slate-200"
+              >
+                ← Back to email
+              </button>
+            </form>
+          )}
+
+          {/* Step 3: Team Selection */}
+          {step === 'team' && (
+            <form onSubmit={handleTeamSelection} className="space-y-4">
+              <div>
+                <label htmlFor="team" className="mb-1 block text-xs text-slate-400">
+                  Select Your Team
+                </label>
+                <select
+                  id="team"
+                  className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-emerald-400/40"
+                  value={team}
+                  onChange={(e) => setTeam(e.target.value)}
+                  required
+                  disabled={loading}
+                >
+                  <option value="">Choose your team...</option>
+                  {teams.map((teamOption) => (
+                    <option key={teamOption} value={teamOption} className="bg-slate-800">
+                      {teamOption}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-slate-500">
+                  This helps us understand our user base better
+                </p>
+              </div>
+
+              {error && (
+                <p className="rounded-lg border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+                  {error}
+                </p>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading || !team}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-black hover:bg-emerald-400 disabled:opacity-70"
+              >
+                <LogIn className="h-4 w-4" />
+                {loading ? "Completing..." : "Complete Registration"}
+              </button>
+            </form>
+          )}
 
           <p className="text-center text-xs text-slate-400">
             By continuing, you agree to our <span className="underline">Terms</span> and{" "}
             <span className="underline">Privacy</span>.
           </p>
-        </form>
+        </div>
       </div>
     </div>
   );
@@ -537,48 +827,6 @@ function LoginLogoMark(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
-/* --- How it works (optional section component) --- */
-function HowItWorks() {
-  const steps = [
-    {
-      k: "1",
-      title: "Connect your stack",
-      desc: "Point your LLM calls at GreenAI — keep your SDKs and prompts.",
-      icon: <MessageSquare className="h-4 w-4 text-emerald-300" />,
-    },
-    {
-      k: "2",
-      title: "Route intelligently",
-      desc: "We blend quality, latency, and live grid intensity to pick the right model.",
-      icon: <Zap className="h-4 w-4 text-emerald-300" />,
-    },
-    {
-      k: "3",
-      title: "Track & earn",
-      desc: "See energy and CO₂e saved. Earn rewards for greener choices.",
-      icon: <Award className="h-4 w-4 text-emerald-300" />,
-    },
-  ];
-
-  return (
-    <section className="mx-auto mt-12 max-w-6xl px-4">
-      <h3 className="mb-4 text-center text-xl font-semibold text-emerald-300">How it works</h3>
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        {steps.map((s) => (
-          <div key={s.k} className="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <div className="mb-2 flex items-center gap-2 text-sm text-slate-300">
-              <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-400/20">
-                {s.k}
-              </span>
-              {s.icon} <span className="font-medium">{s.title}</span>
-            </div>
-            <p className="text-slate-300/90">{s.desc}</p>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
 
 /* --- Background deco --- */
 function EcoWaveDeco() {
@@ -665,6 +913,19 @@ function ChatScreen() {
     setInput("");
     setMessages((m) => [...m, { role: "user", content: text }]);
 
+    // Perform Gemini analysis and store in Supabase
+    if (user?.email) {
+      console.log("[Chat] Performing Gemini analysis for prompt:", text);
+      try {
+        const analysisResults = await insertGeminiToSupabase(text, user.email);
+        console.log("[Chat] Gemini analysis completed:", analysisResults);
+      } catch (error) {
+        console.log("[Chat] Error performing Gemini analysis:", error);
+      }
+    } else {
+      console.log("[Chat] No user email available for analysis");
+    }
+
     const effectColor: "green" | "red" = currentModel.energy === "intensive" ? "red" : "green";
     if (!playedColorsRef.current.has(effectColor)) {
       requestAnimationFrame(() => {
@@ -674,7 +935,7 @@ function ChatScreen() {
       playedColorsRef.current.add(effectColor);
     }
 
-    const reply = `(${currentModel.label}) demo reply`;
+    const reply = `(${currentModel.label}) I've analyzed your prompt for carbon emissions across different Gemini models. The data has been stored in our database. Here's a summary: Your prompt of ${text.length} characters will generate approximately ${Math.round(text.length / 4)} tokens, with varying CO₂ emissions depending on the model chosen.`;
     setTimeout(() => setMessages((m) => [...m, { role: "assistant", content: reply }]), 350);
   }
 
@@ -1173,38 +1434,6 @@ function Card({ title, icon, children }: { title: string; icon?: React.ReactNode
   );
 }
 
-/* ---------------- Chat Input ---------------- */
-function ChatInput({
-  value,
-  onChange,
-  onSend,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  onSend: () => void;
-}) {
-  function onKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      onSend();
-    }
-  }
-  return (
-    <div className="mx-auto flex max-w-3xl items-end gap-2">
-      <textarea
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={onKey}
-        rows={1}
-        placeholder="Message…"
-        className="min-h-[44px] flex-1 resize-none rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none placeholder:text-slate-500"
-      />
-      <PrimaryButton onClick={onSend}>
-        <Send className="h-4 w-4" /> Send
-      </PrimaryButton>
-    </div>
-  );
-}
 
 /* ---------------- Route guard & App ---------------- */
 function Protected({ children }: { children: React.ReactNode }) {
