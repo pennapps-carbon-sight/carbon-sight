@@ -46,7 +46,7 @@ carbon_agent/
 **Auto-switch ON (default):**  
 - Queries dynamically routed based on CO₂ + latency thresholds  
 - User sees energy bar feedback:
-- 
+  
 Used: Gemini Flash | 0.05 kWh | 20g CO₂ | 0.002 $GREEN earned
 
 
@@ -98,23 +98,23 @@ Automatically assigned by the Thinking Agent:
 ### 4.1 Team Dashboard  
 - **Prompting Panel** with inline feedback  
 - **Leaderboards**  
-- Models used by team (Flash vs Pro)  
-- Team standing vs others in carbon savings  
+  - Models used by team (Flash vs Pro)  
+  - Team standing vs others in carbon savings  
 - **Team Stats**  
-- Avg latency  
-- CO₂ saved vs baseline  
-- Cost savings in $  
-- Tokens/NFTs earned  
-- Trendlines + daily/weekly reports  
+  - Avg latency  
+  - CO₂ saved vs baseline  
+  - Cost savings in $  
+  - Tokens/NFTs earned  
+  - Trendlines + daily/weekly reports  
 - **Advanced Analytics (optional)**  
-- Hypothesis tests, regression forecasts, ANOVA comparisons  
-- Visualizations: boxplots, confidence bands  
+  - Hypothesis tests, regression forecasts, ANOVA comparisons  
+  - Visualizations: boxplots, confidence bands  
 
 ### 4.2 Admin Dashboard  
-- Org-wide leaderboards  
-- Model usage heatmap (“carbon hog” models)  
-- Blockchain ledger of $GREEN payouts → Proof-of-Green  
-- Exportable CO₂ certificates for compliance/PR  
+  - Org-wide leaderboards  
+  - Model usage heatmap (“carbon hog” models)  
+  - Blockchain ledger of $GREEN payouts → Proof-of-Green  
+  - Exportable CO₂ certificates for compliance/PR  
 
 ---
 
