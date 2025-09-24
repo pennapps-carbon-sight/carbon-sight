@@ -24,9 +24,9 @@ class GeminiService:
         self.api_key_available = bool(config.gemini_api_key and config.gemini_api_key != "your_gemini_api_key_here")
         
         if self.api_key_available:
-            # Initialize REAL Gemini client
-            genai.configure(api_key=config.gemini_api_key)
-            self.model = genai.GenerativeModel('gemini-1.5-flash')
+        # Initialize REAL Gemini client
+        genai.configure(api_key=config.gemini_api_key)
+        self.model = genai.GenerativeModel('gemini-1.5-flash')
         else:
             print("⚠️  GEMINI_API_KEY not configured - running in demo mode")
             self.model = None
@@ -321,7 +321,7 @@ class GeminiService:
                 "efficiency_score": efficiency_score,
                 "success": result.get("success", False)
             }
-
+        
         return {
             "prompt": prompt,
             "results": results,

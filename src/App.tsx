@@ -397,7 +397,7 @@ const MODELS: Model[] = [
     { id: "gemini-1.5-flash-lite", label: "Gemini 1.5 Flash Lite", energy: "sustainable" },
     { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", energy: "intensive" },
     { id: "gemini-1.5-pro", label: "Gemini 1.5 Pro", energy: "intensive" },
-  ];
+];
 
 /* ---------------- Screen 1: Homepage + Login ---------------- */
 function HomePage() {
@@ -1060,13 +1060,13 @@ ${statsTable}
         const bestModelEfficient = modelComparison.best_model?.includes('flash') || modelComparison.best_model?.includes('lite');
         const effectColor: "green" | "red" = bestModelEfficient ? "green" : "red";
         
-        if (!playedColorsRef.current.has(effectColor)) {
-          requestAnimationFrame(() => {
-            setFx({ show: true, color: effectColor });
-            window.setTimeout(() => setFx((p) => ({ ...p, show: false })), BURST_MS);
-          });
-          playedColorsRef.current.add(effectColor);
-        }
+    if (!playedColorsRef.current.has(effectColor)) {
+      requestAnimationFrame(() => {
+        setFx({ show: true, color: effectColor });
+        window.setTimeout(() => setFx((p) => ({ ...p, show: false })), BURST_MS);
+      });
+      playedColorsRef.current.add(effectColor);
+    }
 
         console.log("[Chat] Model comparison completed:", modelComparison);
       } else {
@@ -1494,14 +1494,14 @@ useEffect(() => {
             return (
               <div key={i} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
                 <div className="max-w-[72ch]">
-                  <div
+                <div
                     className={`whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm shadow-[0_0_0_1px_rgba(255,255,255,0.05)] ${
-                      mine
-                        ? "bg-gradient-to-br from-emerald-500 to-emerald-400 text-black"
-                        : "bg-white/5 text-slate-100"
-                    }`}
-                  >
-                    {m.content}
+                    mine
+                      ? "bg-gradient-to-br from-emerald-500 to-emerald-400 text-black"
+                      : "bg-white/5 text-slate-100"
+                  }`}
+                >
+                  {m.content}
                   </div>
                   
                   {/* Energy Bar - only show after the last assistant message when auto-switch is ON */}
