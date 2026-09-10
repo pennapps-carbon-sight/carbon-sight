@@ -35,6 +35,7 @@ import {
   ErrorBar,
 } from "recharts";
 import CarbonSightLogo from "./CarbonSightLockup";
+import apiService, { type ChatResponse } from "./api";
 import type { TeamAverages } from "./models/metrics";
 import { fetchTeamAveragesFromView } from "./api/metrics";
 
@@ -1040,6 +1041,8 @@ function EcoWaveDeco() {
 
 /* ---------------- Screen 2: Chat (modern, polished, hideable sidebar) ---------------- */
 
+type ChatMsg = { role: "user" | "assistant"; content: string };
+
 type EstRow = {
   modelId: string;
   model: string;
@@ -1097,8 +1100,18 @@ const GEMINI_BASELINES: BaselineRow[] = [
 ];
 
 
-function estimateForPrompt(_text: string): EstRow[] {
-  return GEMINI_BASELINES;
+/** Rough per-prompt estimate for each baseline model, assuming ~1k tokens. */
+function estimateForPrompt(text: string): EstRow[] {
+  const tokens = Math.max(1, Math.round(text.length / 4));
+  const per1k = tokens / 1000;
+  return GEMINI_BASELINES.map((b) => ({
+    modelId: b.model,
+    model: b.model,
+    costUSD: b.costUsdPer1k * per1k,
+    co2kg: (b.co2Per1k * per1k) / 1000,
+    latencyMs: b.latencyMsP95,
+    tokens,
+  }));
 }
 function ChatScreen() {
   const { user, logout } = useAuth();
@@ -1112,7 +1125,9 @@ function ChatScreen() {
   const playedColorsRef = useRef<Set<"green" | "red">>(new Set());
   const burstPlayedRef = useRef(false);
 
-    const [uiAutoBest, setUiAutoBest] = useState(false);
+    const [uiAutoBest, setUiAutoBest] = useState(true);
+  // Energy metrics from the last backend reply, shown under the assistant message.
+  const [lastEnergy, setLastEnergy] = useState<ChatResponse["energy_metrics"] & { modelUsed: string; credits: number } | null>(null);
 
   // Per-prompt analysis rows keyed by message index
 const [analyses, setAnalyses] = useState<Record<number, EstRow[]>>({});
@@ -1127,7 +1142,7 @@ const [infoFor, setInfoFor] = useState<number | null>(null);
   // Chat state (demo)
   const [convos, setConvos] = useState<{ id: string; title: string }[]>([{ id: "c1", title: "New chat" }]);
   const [activeId, setActiveId] = useState("c1");
-  const [messages, setMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([
+  const [messages, setMessages] = useState<ChatMsg[]>([
     { role: "assistant", content: "Hi! Ask me anything about CarbonSight. This is a demo UI." },
   ]);
   const [input, setInput] = useState("");
@@ -1161,7 +1176,7 @@ const [infoFor, setInfoFor] = useState<number | null>(null);
   // Add user message and capture its index
   setMessages((prev) => {
     const myIndex = prev.length; // this user's message will be at this index
-    const next = [...prev, { role: "user", content: text }];
+    const next: ChatMsg[] = [...prev, { role: "user", content: text }];
 
     // compute analysis rows for this prompt (front-end demo)
     const rows = estimateForPrompt(text);
@@ -1183,23 +1198,33 @@ const [infoFor, setInfoFor] = useState<number | null>(null);
     playedColorsRef.current.add(effectColor);
   }
 
+  // "Auto Best" hands model choice to the routing agent; otherwise send the
+  // model the user picked. The backend reports which one it actually used.
   try {
-    // Call your backend
-    const res = await fetch("http://localhost:4000/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text }), // match your backend
+    const res = await apiService.sendMessage({
+      message: text,
+      model: uiAutoBest ? "auto" : modelId,
+      user_id: user?.email ?? "anonymous",
     });
-  
-    const data = await res.json();
-    const reply = data.reply; // backend returns { reply: "..." }
-  
-    setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+
+    setLastEnergy({
+      ...res.energy_metrics,
+      modelUsed: res.model_used || res.energy_metrics.model_name,
+      // $GREEN accrues at CO2_saved_grams / 10 (see README).
+      credits: res.energy_metrics.co2_grams / 10,
+    });
+
+    setMessages((prev) => [...prev, { role: "assistant", content: res.message }]);
   } catch (err) {
     console.error(err);
+    setLastEnergy(null);
     setMessages((prev) => [
       ...prev,
-      { role: "assistant", content: "Failed to get response from Gemini API." },
+      {
+        role: "assistant",
+        content:
+          "Could not reach the CarbonSight backend. Start it with `python run.py` and set VITE_API_BASE_URL.",
+      },
     ]);
   }
 }
@@ -1548,14 +1573,17 @@ useEffect(() => {
         >
           <ReactMarkdown
             components={{
-              code({ inline, className, children, ...props }) {
-                return inline ? (
+              code({ className, children, ...props }) {
+                // react-markdown v10 removed the `inline` prop. A fenced block
+                // carries a language-* class or spans multiple lines.
+                const isBlock =
+                  /language-/.test(className ?? "") || String(children).includes("\n");
+                return !isBlock ? (
                   <code className={className} {...props}>
                     {children}
                   </code>
                 ) : (
                   <pre
-                    {...props}
                     style={{
                       background: "#272822",
                       color: "#f8f8f2",
@@ -1609,8 +1637,22 @@ useEffect(() => {
         {/* Composer */}
         <footer className="relative z-20 border-t border-white/10 p-3">
   <div className="mx-auto max-w-4xl">
+      {/* Energy readout for the last reply — the whole point of the product. */}
+      {lastEnergy && (
+        <div className="mx-auto mb-2 flex max-w-4xl flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[11px] text-slate-400">
+          <span className="text-slate-300">Used: {lastEnergy.modelUsed}</span>
+          <span aria-hidden>|</span>
+          <span>{lastEnergy.energy_kwh.toFixed(4)} kWh</span>
+          <span aria-hidden>|</span>
+          <span>{lastEnergy.co2_grams.toFixed(2)} g CO<sub>2</sub></span>
+          <span aria-hidden>|</span>
+          <span className="text-emerald-400">{lastEnergy.credits.toFixed(3)} $GREEN earned</span>
+          {lastEnergy.region && <><span aria-hidden>|</span><span>{lastEnergy.region}</span></>}
+        </div>
+      )}
+
     <div className="flex items-end gap-2 rounded-2xl border border-white/10 bg-black/30 p-2">
-      {/* ⬇️ inert toggle starts */}
+      {/* Auto Best: let the routing agent pick the model */}
       <div className="flex items-center gap-2 self-center px-1">
         <span className="text-[11px] text-slate-400">Auto Best</span>
         <button
@@ -1620,7 +1662,7 @@ useEffect(() => {
           className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
             uiAutoBest ? "bg-emerald-500" : "bg-white/10"
           }`}
-          title="Auto-select best model (UI only)"
+          title={uiAutoBest ? "Routing agent picks the model" : "Using your selected model"}
         >
           <span
             className={`inline-block h-5 w-5 transform rounded-full bg-white transition ${
@@ -1629,7 +1671,7 @@ useEffect(() => {
           />
         </button>
       </div>
-      {/* ⬆️ inert toggle ends */}
+      
 
       <textarea
         value={input}
