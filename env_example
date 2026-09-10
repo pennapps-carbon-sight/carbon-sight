@@ -1,0 +1,13 @@
+# Supabase Configuration
+SUPABASE_URL=your_supabase_project_url_here
+SUPABASE_KEY=your_supabase_anon_key_here
+
+# Application Configuration
+DEBUG=True
+HOST=0.0.0.0
+PORT=8000
+
+# Energy Calculation Constants
+BASE_CO2_PER_KWH=500.0
+REWARD_RATE_PER_GRAM_CO2=0.02
+CSI_SURGE_THRESHOLD=70
