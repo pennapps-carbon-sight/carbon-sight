@@ -110,13 +110,15 @@ npm run lint
 
 A 36-hour hackathon build, and honest about which edges are rough:
 
-- `npm run build` passes. `npm run typecheck` reports **4 pre-existing type errors** in `App.tsx` —
-  a `BaselineRow`/`EstRow` mismatch and react-markdown v10 prop typings. Runtime is unaffected;
-  they are real and unfixed.
-- The auto-switch UI lives on `feature/auto-switch-models` and is **not yet integrated** into the
-  frontend on `main`. Merging the two frontends is the next real task.
-- Model tiers in `src/models.ts` are display placeholders; live routing happens backend-side
-  against Gemini variants.
+- `npm run build` and `npm run typecheck` both pass clean.
+- The chat calls the FastAPI backend and renders the energy metrics it returns. **Auto Best** is
+  live: on, the routing agent picks the model; off, your selection is sent.
+- Without a backend running, the chat says so rather than failing silently. Without a `.env`, the
+  app shows a configuration screen rather than crashing.
+- Model tiers in `src/models.ts` are display labels; live routing happens backend-side against
+  Gemini variants.
+- The blockchain reward flow is specified and priced (`$GREEN` at `CO₂_saved_grams / 10`) but the
+  contract calls are not wired into the frontend yet.
 
 ## Roadmap
 
