@@ -1,2 +1,3 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Pre-rewrite snapshots of three backend services, kept for reference. They are
+# not source, so keep them out of GitHub's language stats.
+backup_original/** linguist-detectable=false
