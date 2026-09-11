@@ -44,9 +44,11 @@ import WaterBurstFX from "./WaterBurst";
 import "./water-burst.css";
 
 export default function App() {
-  if (MISSING_ENV) return <MissingEnv />;
+  // Without Supabase config the public pages still render; only sign-in and
+  // the signed-in routes need it, and those say so instead of blanking the app.
   return (
     <ErrorBoundary>
+      {MISSING_ENV && <MissingEnv />}
       <BrowserRouter>
         <AuthProvider>
           <Routes>
@@ -117,7 +119,7 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   async function checkEmailExists(email: string): Promise<boolean> {
-    if (!supabase) throw new Error("Supabase env vars are missing. Add .env and restart the dev server.");
+    if (!supabase) throw new Error("Sign-in is not configured on this deployment.");
     console.log("[Auth] Checking if email exists:", email);
     
     try {
@@ -144,7 +146,7 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function sendOTP(email: string) {
-    if (!supabase) throw new Error("Supabase env vars are missing. Add .env and restart the dev server.");
+    if (!supabase) throw new Error("Sign-in is not configured on this deployment.");
     console.log("[Auth] Sending OTP to:", email);
     
     const { data, error } = await supabase.auth.signInWithOtp({
@@ -164,7 +166,7 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function verifyOTP(email: string, token: string) {
-    if (!supabase) throw new Error("Supabase env vars are missing. Add .env and restart the dev server.");
+    if (!supabase) throw new Error("Sign-in is not configured on this deployment.");
     console.log("[Auth] Verifying OTP for:", email);
     
     const { data, error } = await supabase.auth.verifyOtp({
@@ -263,14 +265,11 @@ function BackdropGlow() {
 
 /* ---------------- Fallback when env missing ---------------- */
 function MissingEnv() {
+  // A slim notice rather than a full-screen block: the public pages still work.
   return (
-    <div className="min-h-screen grid place-items-center bg-[#0b1115] text-slate-100 p-6">
-      <div className="rounded-2xl border border-white/10 bg-white/5 p-6 max-w-lg">
-        <h1 className="text-xl font-semibold text-emerald-400">Supabase not configured</h1>
-        <p className="mt-3 text-sm">
-          Create <code>.env</code> with <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> and restart the dev server.
-        </p>
-      </div>
+    <div className="fixed inset-x-0 bottom-0 z-50 border-t border-white/10 bg-[#0b1115]/95 px-4 py-2 text-center text-xs text-slate-300 backdrop-blur">
+      Demo deployment — sign-in is off because this build has no Supabase configuration
+      (<code>VITE_SUPABASE_URL</code>, <code>VITE_SUPABASE_ANON_KEY</code>).
     </div>
   );
 }
