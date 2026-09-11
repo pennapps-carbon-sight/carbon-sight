@@ -1,0 +1,9 @@
+# Vercel deploys the Vite frontend only. The FastAPI backend is Python and
+# runs separately (see README, "Run it"). Hiding it here stops Vercel from
+# detecting a Python app and trying to install the backend's dependencies.
+*.py
+requirements.txt
+backup_original/
+__pycache__/
+*.sql
+start_prod.sh

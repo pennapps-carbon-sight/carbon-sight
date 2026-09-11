@@ -1,18 +1,11 @@
+# Backend (FastAPI) dependencies — only what the code actually imports.
 fastapi
 uvicorn[standard]
 pydantic
 python-dotenv
 supabase
 google-generativeai
+psutil
+# Optional: openai_service.py falls back cleanly if these are missing
 openai
 tiktoken
-numpy
-pandas
-scipy
-matplotlib
-httpx
-psutil
-scikit-learn
-tensorflow
-transformers
-torch
